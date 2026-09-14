@@ -845,6 +845,10 @@ def _read_stats_doc(conn: sqlite3.Connection) -> Dict[str, Any]:
     data = _get_meta_json(conn, _meta_key(_DOC_STATS), {})
     if not isinstance(data.get("plugin_opens"), dict):
         data["plugin_opens"] = {}
+    if not isinstance(data.get("moderation_activity"), list):
+        data["moderation_activity"] = []
+    if not isinstance(data.get("moderation_weeks"), dict):
+        data["moderation_weeks"] = {}
     return data
 
 
@@ -852,6 +856,10 @@ def _write_stats_doc(conn: sqlite3.Connection, data: Dict[str, Any]) -> None:
     payload = dict(data) if isinstance(data, dict) else {}
     if not isinstance(payload.get("plugin_opens"), dict):
         payload["plugin_opens"] = {}
+    if not isinstance(payload.get("moderation_activity"), list):
+        payload["moderation_activity"] = []
+    if not isinstance(payload.get("moderation_weeks"), dict):
+        payload["moderation_weeks"] = {}
     _set_meta_json(conn, _meta_key(_DOC_STATS), payload)
     _mark_initialized(conn, _DOC_STATS)
 
@@ -950,8 +958,6 @@ async def _schedule_save(doc_key: str) -> None:
         if doc_key in _cache and _dirty.get(doc_key):
             data = deepcopy(_cache[doc_key])
             await asyncio.to_thread(_write_sqlite_doc_sync, doc_key, data)
-            # A newer mutation may have happened while SQLite was writing.
-            # Only mark the document clean if the saved snapshot is current.
             if _cache.get(doc_key) == data:
                 _dirty[doc_key] = False
 
@@ -1034,8 +1040,6 @@ def _write_config_sync(payload: Dict[str, Any], generation: int) -> None:
     global _config_persisted_generation
 
     with _config_write_lock:
-        # If a newer save was requested before this worker got the lock,
-        # writing this snapshot would roll the configuration back.
         if generation < _config_generation:
             return
         _ensure_db()
@@ -1269,9 +1273,16 @@ def save_poster(data: Dict[str, Any]) -> None:
 
 
 def load_stats() -> Dict[str, Any]:
-    data = _normalize_dict(_get_cached(_DOC_STATS), {"plugin_opens": {}})
+    data = _normalize_dict(
+        _get_cached(_DOC_STATS),
+        {"plugin_opens": {}, "moderation_activity": [], "moderation_weeks": {}},
+    )
     if not isinstance(data.get("plugin_opens"), dict):
         data["plugin_opens"] = {}
+    if not isinstance(data.get("moderation_activity"), list):
+        data["moderation_activity"] = []
+    if not isinstance(data.get("moderation_weeks"), dict):
+        data["moderation_weeks"] = {}
     return data
 
 

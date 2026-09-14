@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.enums import ParseMode
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from bot.context import get_lang
 from bot.helpers import ack
@@ -23,6 +24,17 @@ router.callback_query.middleware(MenuOwnerMiddleware())
 logger = logging.getLogger(__name__)
 
 _APPEAL_MIN_LEN = 40
+
+
+def _question_plugin_context(entry: dict | None) -> tuple[str, str | None, str]:
+    payload = entry.get("payload") if isinstance(entry, dict) and isinstance(entry.get("payload"), dict) else {}
+    plugin = payload.get("plugin") if isinstance(payload.get("plugin"), dict) else {}
+    description = str(payload.get("description_ru") or payload.get("description_en") or plugin.get("description") or "—")
+    file_path = str(plugin.get("file_path") or "").strip()
+    file_id = str(payload.get("moderation_file_id") or plugin.get("file_id") or "").strip()
+    if file_path and Path(file_path).exists():
+        return description, file_path, ""
+    return description, None, file_id
 
 
 def _own_request(cb: CallbackQuery, request_id: str) -> dict | None:
@@ -78,10 +90,12 @@ async def on_moderation_contact_text(message: Message, state: FSMContext) -> Non
         return
 
     cfg = moderation_config()
+    description, file_path, file_id = _question_plugin_context(entry)
     body = t(
         "modcontact_forum", "ru",
         name=plain_html(request_title(entry) if entry else slug),
         sender=user_mention(user.id, user.username),
+        description=strip_blockquote_tags(telegram_html(description)),
         text=strip_blockquote_tags(text),
     )
     try:
@@ -96,6 +110,25 @@ async def on_moderation_contact_text(message: Message, state: FSMContext) -> Non
         await message.answer(t("modcontact_failed", lang), disable_web_page_preview=True)
         await state.set_state(UserFlow.idle)
         return
+    try:
+        if file_path:
+            await message.bot.send_document(
+                cfg["chat_id"],
+                FSInputFile(file_path),
+                message_thread_id=cfg["topic_id"],
+                reply_to_message_id=delivered.message_id,
+                allow_sending_without_reply=True,
+            )
+        elif file_id:
+            await message.bot.send_document(
+                cfg["chat_id"],
+                file_id,
+                message_thread_id=cfg["topic_id"],
+                reply_to_message_id=delivered.message_id,
+                allow_sending_without_reply=True,
+            )
+    except Exception:
+        logger.exception("event=modcontact.plugin_file_failed user_id=%s request_id=%s", user.id, request_id)
 
     register_dialog_message(
         int(cfg["chat_id"]), int(delivered.message_id),

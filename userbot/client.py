@@ -6,8 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from telethon import TelegramClient, __version__ as TELETHON_VERSION
+from telethon import TelegramClient, __version__ as TELETHON_VERSION, utils
 from telethon.errors.rpcerrorlist import MessageIdInvalidError, MessageNotModifiedError
+from telethon.tl.functions.messages import GetDiscussionMessageRequest
 from telethon.tl.types import DocumentAttributeFilename, Message, MessageEntityBlockquote
 from telethon.extensions import html as telethon_html
 
@@ -185,6 +186,19 @@ class UserbotClient:
             except Exception:
                 self._icons_sync_entity = await self.client.get_entity(ICONS_CHANNEL_USERNAME)
         return self._icons_sync_entity
+
+    async def resolve_discussion_message(self, message_id: int) -> tuple[int, int] | None:
+        entity = await self.get_publish_entity()
+        result = await _guard(
+            self.client(GetDiscussionMessageRequest(peer=entity, msg_id=int(message_id))),
+            "get_discussion_message",
+        )
+        channel_id = utils.get_peer_id(entity)
+        for message in result.messages:
+            peer_id = utils.get_peer_id(message.peer_id)
+            if peer_id != channel_id:
+                return int(peer_id), int(message.id)
+        return None
 
     def _parse_html(self, text: str) -> tuple[str, list]:
         if not text:

@@ -101,6 +101,11 @@ async def on_startup(bot: Bot) -> None:
     from bot.services.poster import start_poster_worker
     start_poster_worker(bot)
 
+    from bot.services.example_media import start_example_media_worker
+    start_example_media_worker(bot)
+
+    moderation_flow.start_vote_prompt_worker(bot)
+
     from bot.services.backup import start_backup_worker
     start_backup_worker(bot)
 
@@ -125,6 +130,11 @@ async def on_shutdown(bot: Bot) -> None:
 
     from bot.services.poster import stop_poster_worker
     await stop_poster_worker()
+
+    from bot.services.example_media import stop_example_media_worker
+    await stop_example_media_worker()
+
+    await moderation_flow.stop_vote_prompt_worker()
 
     from bot.services.backup import stop_backup_worker
     await stop_backup_worker()

@@ -247,6 +247,7 @@ def comment_skip_kb(lang: str, has_content: bool = False, media_count: int = 0,
         rows.append([_btn(t("btn_comment_reset", lang), callback_data="comment:reset", icon="delete", style="danger")])
     if not required:
         rows.append([_btn(t("btn_skip", lang), callback_data="comment:skip", icon="forward")])
+    rows.append([_btn(t("btn_cancel", lang), callback_data="cancel", style="danger", icon="cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -556,9 +557,47 @@ def admin_menu_kb(role: str | None = None, lang: str = "ru") -> InlineKeyboardMa
             _btn(t("admin_btn_banned", lang), callback_data="adm:banned:0", icon="ban"),
             _btn(t("admin_btn_config", lang), callback_data="adm:config", icon="settings"),
         ])
-    else:
-        rows.append([_btn(t("admin_btn_stats", lang), callback_data="adm:stats", icon="stats")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_stats_kb(role: str | None = None, lang: str = "ru") -> InlineKeyboardMarkup:
+    rows = []
+    if role == "super":
+        rows.append([_btn(t("admin_btn_moderation_stats", lang), callback_data="adm:modstats:current", icon="vote")])
+    rows.append([_btn(t("btn_back", lang), callback_data="adm:cancel", style="danger", icon="back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def moderation_week_kb(
+    moderators: list[tuple[int, str, int, int, int]],
+    week: str,
+    previous_week: str,
+    next_week: str | None,
+    lang: str = "ru",
+) -> InlineKeyboardMarkup:
+    rows = []
+    for user_id, username, checked, yes, no in moderators:
+        label = t(
+            "admin_moderation_stats_person_button",
+            lang,
+            username=username,
+            checked=checked,
+            yes=yes,
+            no=no,
+        )
+        rows.append([_btn(label, callback_data=f"adm:modstats:user:{week}:{user_id}", icon="profile")])
+    nav = [_btn("<", callback_data=f"adm:modstats:{previous_week}", icon="back")]
+    if next_week:
+        nav.append(_btn(">", callback_data=f"adm:modstats:{next_week}", icon="forward"))
+    rows.append(nav)
+    rows.append([_btn(t("btn_back", lang), callback_data="adm:stats", style="danger", icon="back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def moderation_person_kb(week: str, lang: str = "ru") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn(t("btn_back", lang), callback_data=f"adm:modstats:{week}", style="danger", icon="back")],
+    ])
 
 
 def admin_quiz_list_kb(items: List[Tuple[str, str]], page: int, total_pages: int,
@@ -704,6 +743,7 @@ def admin_plugins_section_kb(lang: str = "ru", role: str | None = None) -> Inlin
         ])
         rows.append([_btn(t("admin_btn_audit", lang), callback_data="adm:audit:0", icon="file")])
         rows.append([_btn(t("admin_btn_quiz", lang), callback_data="adm:quiz:0", icon="requests")])
+        rows.append([_btn(t("admin_btn_publish_examples", lang), callback_data="adm:examples:publish", icon="art")])
     rows.append([_btn(t("btn_back", lang), callback_data="adm:cancel", style="danger", icon="back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -862,11 +902,17 @@ def admin_config_other_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     ])
 
 
-def admin_manage_admins_kb(field: str, admin_ids: List[int], lang: str = "ru") -> InlineKeyboardMarkup:
+def admin_manage_admins_kb(
+    field: str,
+    admin_ids: List[int],
+    lang: str = "ru",
+    labels: dict[int, str] | None = None,
+) -> InlineKeyboardMarkup:
     rows = []
+    labels = labels or {}
     for admin_id in admin_ids:
         rows.append([
-            _btn(str(admin_id), callback_data=f"adm:admins:noop:{field}", icon="profile"),
+            _btn(labels.get(admin_id) or t("admin_unknown_username", lang), callback_data=f"adm:admins:noop:{field}", icon="profile"),
             _btn(t("btn_delete", lang), callback_data=f"adm:admins:rm:{field}:{admin_id}", icon="delete"),
         ])
     rows.append([_btn(t("btn_add", lang), callback_data=f"adm:admins:add:{field}", icon="add")])
@@ -988,6 +1034,7 @@ def admin_review_kb(
     submit_callback: str | None = None,
     lang: str = "ru",
     allow_publish: bool = True,
+    allow_vote: bool = True,
     media_count: int = 0,
 ) -> InlineKeyboardMarkup:
     vote_token = request_callback_token(request_id)
@@ -1001,10 +1048,11 @@ def admin_review_kb(
             _btn(submit_label, callback_data=submit_callback, icon="yes"),
             _btn(t("btn_more", lang), callback_data=f"adm:actions:{request_callback_token(request_id)}", icon="menu"),
         ])
-    rows.append([
-        _btn(t("btn_vote_yes", lang), callback_data=f"modvote:yes:{vote_token}", icon="yes", style="success"),
-        _btn(t("btn_vote_no", lang), callback_data=f"modvote:no:{vote_token}", icon="no", style="danger"),
-    ])
+    if allow_vote:
+        rows.append([
+            _btn(t("btn_vote_yes", lang), callback_data=f"modvote:yes:{vote_token}", icon="yes", style="success"),
+            _btn(t("btn_vote_no", lang), callback_data=f"modvote:no:{vote_token}", icon="no", style="danger"),
+        ])
     if media_count:
         rows.append([_btn(t("admin_btn_show_media", lang, count=media_count),
                           callback_data=f"adm:media:{request_callback_token(request_id)}", icon="art")])
@@ -1021,6 +1069,13 @@ def moderation_vote_kb(request_id: str, yes_count: int = 0, no_count: int = 0, l
             _btn(f"{t('btn_vote_yes', lang)} ({yes_count})", callback_data=f"modvote:yes:{token}", icon="yes", style="success"),
             _btn(f"{t('btn_vote_no', lang)} ({no_count})", callback_data=f"modvote:no:{token}", icon="no", style="danger"),
         ],
+    ])
+
+
+def moderation_delete_kb(request_id: str, lang: str = "ru") -> InlineKeyboardMarkup:
+    token = request_callback_token(request_id)
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn(t("admin_submit_delete", lang), callback_data=f"adm:delete:{token}", icon="delete", style="danger")],
     ])
 
 
@@ -1140,9 +1195,12 @@ def admin_reject_templates_cfg_kb(templates: List[str], kind: str = "reject", la
         for idx, tpl in enumerate(templates)
     ]
     rows.append([_btn(t("kb_admin_rejtpl_add", lang), callback_data=f"adm:rejtpl_add:{kind}", icon="edit", style="success")])
-    other = "approve" if kind == "reject" else "reject"
-    rows.append([_btn(t(f"kb_admin_tpl_switch_{other}", lang), callback_data=f"adm:rejtpl_cfg:{other}",
-                      icon=("yes" if other == "approve" else "no"))])
+    kinds = ("approve", "reject", "update_approve", "update_reject")
+    for other in kinds:
+        if other == kind:
+            continue
+        rows.append([_btn(t(f"kb_admin_tpl_switch_{other}", lang), callback_data=f"adm:rejtpl_cfg:{other}",
+                          icon=("yes" if other.endswith("approve") else "no"))])
     rows.append([_btn(t("btn_back", lang), callback_data="adm:cancel", style="danger", icon="back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

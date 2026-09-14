@@ -204,7 +204,12 @@ def build_icon_channel_post(entry: Dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
-async def publish_plugin(entry: Dict[str, Any], bot: Bot) -> Dict[str, Any]:
+async def publish_plugin(
+    entry: Dict[str, Any],
+    bot: Bot,
+    actor: str | None = None,
+    actor_id: int | None = None,
+) -> Dict[str, Any]:
     payload = entry.get("payload", {})
     plugin = payload.get("plugin", {})
     submitter_id = payload.get("user_id")
@@ -233,7 +238,7 @@ async def publish_plugin(entry: Dict[str, Any], bot: Bot) -> Dict[str, Any]:
 
     message = await _send_channel_post(bot, channel_id, post_text, file_path, download_name)
 
-    update_request_status(entry.get("id"), "published")
+    update_request_status(entry.get("id"), "published", actor=actor, actor_id=actor_id)
 
     add_to_catalog(
         entry,
@@ -253,7 +258,11 @@ async def publish_plugin(entry: Dict[str, Any], bot: Bot) -> Dict[str, Any]:
     return {"message_id": message.message_id, "chat_id": channel_id, "link": link}
 
 
-async def publish_icon(entry: Dict[str, Any]) -> Dict[str, Any]:
+async def publish_icon(
+    entry: Dict[str, Any],
+    actor: str | None = None,
+    actor_id: int | None = None,
+) -> Dict[str, Any]:
     from userbot.client import get_userbot
 
     userbot = await get_userbot()
@@ -271,7 +280,7 @@ async def publish_icon(entry: Dict[str, Any]) -> Dict[str, Any]:
 
     result = await userbot.publish_icon(post_text, file_path, download_name)
 
-    update_request_status(entry.get("id"), "published")
+    update_request_status(entry.get("id"), "published", actor=actor, actor_id=actor_id)
 
     config = get_config()
     channel_username = (
@@ -296,7 +305,13 @@ async def publish_icon(entry: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-async def update_plugin(entry: Dict[str, Any], old_catalog_entry: Dict[str, Any], bot: Optional[Bot] = None) -> Dict[str, Any]:
+async def update_plugin(
+    entry: Dict[str, Any],
+    old_catalog_entry: Dict[str, Any],
+    bot: Optional[Bot] = None,
+    actor: str | None = None,
+    actor_id: int | None = None,
+) -> Dict[str, Any]:
     from userbot.client import get_userbot
 
     userbot = await get_userbot()
@@ -348,7 +363,7 @@ async def update_plugin(entry: Dict[str, Any], old_catalog_entry: Dict[str, Any]
     download_name = fit_filename(str(plugin.get('id') or plugin.get('name') or 'plugin'), "plugin")
     result = await userbot.update_message(old_message_id, post_text, file_path, download_name)
 
-    update_request_status(entry.get("id"), "published")
+    update_request_status(entry.get("id"), "published", actor=actor, actor_id=actor_id)
     
     update_catalog_entry(
         old_catalog_entry.get("slug"),

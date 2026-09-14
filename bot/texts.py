@@ -380,10 +380,16 @@ TEXTS: Dict[str, Dict[str, str]] = {
     "admin_notify_pref_off": {"ru": "выключено", "en": "off"},
     "admin_cfg_superadmins": {"ru": "Суперадмины", "en": "Superadmins"},
     "admin_choose_action": {"ru": "Выберите действие:", "en": "Choose action:"},
-    "admin_added": {"ru": "Добавлен: <code>{admin_id}</code>", "en": "Added: <code>{admin_id}</code>"},
-    "admin_added_short": {"ru": "Добавлен: {admin_id}", "en": "Added: {admin_id}"},
-    "admin_removed": {"ru": "Удалён: <code>{admin_id}</code>", "en": "Removed: <code>{admin_id}</code>"},
-    "admin_removed_short": {"ru": "Удалён: {admin_id}", "en": "Removed: {admin_id}"},
+    "admin_removed_short": {"ru": "Удалён", "en": "Removed"},
+    "admin_unknown_username": {"ru": "Без юзернейма", "en": "No username"},
+    "admin_staff_counts": {
+        "ru": "<b>Всего:</b> суперадминов — {superadmins}, модераторов — {moderators}",
+        "en": "<b>Total:</b> superadmins — {superadmins}, moderators — {moderators}",
+    },
+    "admin_identity_line": {
+        "ru": "• {username} — <tg-spoiler>{admin_id}</tg-spoiler>",
+        "en": "• {username} — <tg-spoiler>{admin_id}</tg-spoiler>",
+    },
     "admin_denied": {
         "ru": "Иди нахуй.",
         "en": "Access denied",
@@ -675,6 +681,18 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "ru": "Опишите идею для модерации (необязательно).\n\nМожно приложить до {max} фото или видео — например, как плагин выглядит.\nКогда закончите, нажмите «Отправить».",
         "en": "Describe your idea for the moderators (optional).\n\nYou can attach up to {max} photos or videos — for example, how the plugin looks.\nWhen you're done, tap \"Send\".",
     },
+    "ask_submission_example": {
+        "ru": "<b>Покажите, как работает плагин</b>\n\nПриложите от 1 до {max} фото или видео. Без примера отправить заявку нельзя. Эти материалы увидит модерация, а после публикации они появятся в комментариях к посту. Комментарий можно добавить в подпись или отдельным сообщением.",
+        "en": "<b>Show how the plugin works</b>\n\nAttach 1 to {max} photos or videos. The request cannot be submitted without an example. Moderators will see them, and after publishing they will appear in the post comments. You can add a comment as a caption or a separate message.",
+    },
+    "ask_update_example": {
+        "ru": "<b>Покажите изменения в обновлении</b>\n\nПриложите от 1 до {max} отдельных фото или видео только для этой версии: что именно изменилось. Без примеров отправить обновление нельзя. Эти материалы увидит модерация, а после публикации обновления они появятся в комментариях к посту.",
+        "en": "<b>Show what changed in this update</b>\n\nAttach 1 to {max} separate photos or videos for this version only, showing the changes. The update cannot be submitted without examples. Moderators will see them, and after publishing they will appear in the post comments.",
+    },
+    "submission_example_required": {
+        "ru": "Приложите хотя бы одно фото или видео с примером работы плагина.",
+        "en": "Attach at least one photo or video showing the plugin in action.",
+    },
     "btn_comment_send": {"ru": "Отправить заявку", "en": "Send request"},
     "quiz_intro": {
         "ru": "📝 <b>Мини-тест по правилам</b>\n\nПеред отправкой ответьте на {count} вопроса по правилам публикации.\nОшиблись — тест начнётся заново с новыми вопросами.\n\nПравила: https://t.me/exteraPluginsSup/93",
@@ -717,6 +735,14 @@ TEXTS: Dict[str, Dict[str, str]] = {
     "comment_state": {
         "ru": "Опишите идею для модерации (необязательно).\n\n<b>Комментарий:</b> {comment}\n<b>Медиа:</b> {count}/{max}\n\nМожно добавить ещё или нажать «Отправить».",
         "en": "Describe your idea for the moderators (optional).\n\n<b>Comment:</b> {comment}\n<b>Media:</b> {count}/{max}\n\nAdd more or tap \"Send\".",
+    },
+    "comment_state_media_required": {
+        "ru": "<b>Пример работы плагина</b>\n\n<b>Комментарий:</b> {comment}\n<b>Медиа:</b> {count}/{max}\n\nДобавьте хотя бы одно фото или видео, затем нажмите «Отправить заявку».",
+        "en": "<b>Plugin example</b>\n\n<b>Comment:</b> {comment}\n<b>Media:</b> {count}/{max}\n\nAdd at least one photo or video, then tap \"Send request\".",
+    },
+    "comment_state_update_media_required": {
+        "ru": "<b>Примеры изменений в обновлении</b>\n\n<b>Комментарий:</b> {comment}\n<b>Медиа:</b> {count}/{max}\n\nДобавьте хотя бы одно отдельное фото или видео именно для этого обновления, затем нажмите «Отправить заявку».",
+        "en": "<b>Update change examples</b>\n\n<b>Comment:</b> {comment}\n<b>Media:</b> {count}/{max}\n\nAdd at least one separate photo or video for this update, then tap \"Send request\".",
     },
     "comment_media_limit": {"ru": "Максимум {max} файлов", "en": "Maximum {max} files"},
     "admin_reject_media_added": {
@@ -820,8 +846,8 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "en": "Failed to send the question. Try again later.",
     },
     "modcontact_forum": {
-        "ru": "💬 <b>Вопрос по отклонённой заявке</b>\n\n<b>Заявка:</b> {name}\n<b>Автор:</b> {sender}\n\n<blockquote expandable>{text}</blockquote>\n\n<i>Ответьте реплаем, чтобы ответить автору.</i>",
-        "en": "💬 <b>Question about a rejected submission</b>\n\n<b>Submission:</b> {name}\n<b>Author:</b> {sender}\n\n<blockquote expandable>{text}</blockquote>\n\n<i>Reply to this message to answer the author.</i>",
+        "ru": "💬 <b>Вопрос по отклонённой заявке</b>\n\n<b>Заявка:</b> {name}\n<b>Автор:</b> {sender}\n\n<b>Описание плагина:</b>\n<blockquote expandable>{description}</blockquote>\n\n<b>Вопрос:</b>\n<blockquote expandable>{text}</blockquote>\n\n<i>Файл плагина отправлен реплаем ниже. Ответьте реплаем, чтобы ответить автору.</i>",
+        "en": "💬 <b>Question about a rejected submission</b>\n\n<b>Submission:</b> {name}\n<b>Author:</b> {sender}\n\n<b>Plugin description:</b>\n<blockquote expandable>{description}</blockquote>\n\n<b>Question:</b>\n<blockquote expandable>{text}</blockquote>\n\n<i>The plugin file is sent as a reply below. Reply to this message to answer the author.</i>",
     },
     "appeal_prompt_comment": {
         "ru": "♻️ <b>Апелляция по заявке «{name}»</b>\n\nПодробно опишите, почему решение стоит пересмотреть: что вы исправили или почему отказ ошибочен.\n\n⚠️ Это последняя попытка: если заявку отклонят снова, плагин будет заблокирован навсегда.",
@@ -878,7 +904,7 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "ru": "Шаблоны не настроены. Добавьте их: Настройки → Модерация → Шаблоны отказа.",
         "en": "No templates configured. Add them: Settings → Moderation → Rejection templates.",
     },
-    "admin_cfg_reject_templates": {"ru": "Шаблоны отказа", "en": "Rejection templates"},
+    "admin_cfg_reject_templates": {"ru": "Шаблоны причин", "en": "Reason templates"},
     "admin_rejtpl_cfg_title": {
         "ru": "<b>Шаблоны отказа</b>\n\nНажмите на шаблон, чтобы удалить его.\n\n{templates}",
         "en": "<b>Rejection templates</b>\n\nTap a template to delete it.\n\n{templates}",
@@ -911,6 +937,8 @@ TEXTS: Dict[str, Dict[str, str]] = {
     "admin_publishing": {"ru": "Публикация...", "en": "Publishing..."},
     "kb_admin_tpl_switch_approve": {"ru": "Шаблоны «За» →", "en": "\"For\" templates →"},
     "kb_admin_tpl_switch_reject": {"ru": "Шаблоны «Отказать» →", "en": "\"Reject\" templates →"},
+    "kb_admin_tpl_switch_update_approve": {"ru": "Обновления: «За»", "en": "Updates: For"},
+    "kb_admin_tpl_switch_update_reject": {"ru": "Обновления: «Отказать»", "en": "Updates: Reject"},
     "admin_apptpl_cfg_title": {
         "ru": "<b>Шаблоны причин «За»</b>\n\n{templates}\n\nНажмите на шаблон, чтобы удалить.",
         "en": "<b>\"For\" reason templates</b>\n\n{templates}\n\nTap a template to delete it.",
@@ -918,6 +946,22 @@ TEXTS: Dict[str, Dict[str, str]] = {
     "admin_apptpl_cfg_empty": {
         "ru": "<b>Шаблоны причин «За»</b>\n\nСписок пуст.",
         "en": "<b>\"For\" reason templates</b>\n\nThe list is empty.",
+    },
+    "admin_update_apptpl_cfg_title": {
+        "ru": "<b>Шаблоны причин «За» для обновлений</b>\n\n{templates}\n\nНажмите на шаблон, чтобы удалить.",
+        "en": "<b>\"For\" reason templates for updates</b>\n\n{templates}\n\nTap a template to delete it.",
+    },
+    "admin_update_apptpl_cfg_empty": {
+        "ru": "<b>Шаблоны причин «За» для обновлений</b>\n\nСписок пуст.",
+        "en": "<b>\"For\" reason templates for updates</b>\n\nThe list is empty.",
+    },
+    "admin_update_rejtpl_cfg_title": {
+        "ru": "<b>Шаблоны причин «Отказать» для обновлений</b>\n\n{templates}\n\nНажмите на шаблон, чтобы удалить.",
+        "en": "<b>\"Reject\" reason templates for updates</b>\n\n{templates}\n\nTap a template to delete it.",
+    },
+    "admin_update_rejtpl_cfg_empty": {
+        "ru": "<b>Шаблоны причин «Отказать» для обновлений</b>\n\nСписок пуст.",
+        "en": "<b>\"Reject\" reason templates for updates</b>\n\nThe list is empty.",
     },
     "kb_vote_anon_off": {"ru": "Сделать голос анонимным", "en": "Make vote anonymous"},
     "kb_vote_anon_on": {"ru": "Голос анонимный", "en": "Vote is anonymous"},
@@ -954,6 +998,18 @@ TEXTS: Dict[str, Dict[str, str]] = {
     "admin_enter_reject_template": {
         "ru": "Введите текст шаблона отказа:",
         "en": "Enter the rejection template text:",
+    },
+    "admin_enter_approve_template": {
+        "ru": "Введите текст шаблона причины «За»:",
+        "en": "Enter the \"For\" reason template text:",
+    },
+    "admin_enter_update_approve_template": {
+        "ru": "Введите текст шаблона причины «За» для обновлений:",
+        "en": "Enter the \"For\" reason template for updates:",
+    },
+    "admin_enter_update_reject_template": {
+        "ru": "Введите текст шаблона причины «Отказать» для обновлений:",
+        "en": "Enter the \"Reject\" reason template for updates:",
     },
     "admin_rejtpl_limit": {
         "ru": "Максимум {limit} шаблонов.",
@@ -1733,7 +1789,7 @@ TEXTS: Dict[str, Dict[str, str]] = {
     "admin_section_plugins": {"ru": "<b>Плагины</b>", "en": "<b>Plugins</b>"},
     "admin_btn_queue_plugins": {"ru": "Заявки плагинов", "en": "Plugin requests"},
     "admin_btn_stats": {"ru": "Статистика", "en": "Stats"},
-    "admin_cfg_admins_plugins": {"ru": "Админы плагинов", "en": "Plugin admins"},
+    "admin_cfg_admins_plugins": {"ru": "Модераторы", "en": "Moderators"},
     "admin_cfg_admins": {"ru": "Админы", "en": "Admins"},
     "admin_cfg_channel": {"ru": "Канал", "en": "Channel"},
     "admin_cfg_section_admins": {"ru": "Админы", "en": "Admins"},
@@ -1785,6 +1841,40 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "ru": "<b>Открытий плагинов по ссылке:</b> {total}\n<b>Топ:</b>",
         "en": "<b>Plugin opens via link:</b> {total}\n<b>Top:</b>",
     },
+    "admin_btn_moderation_stats": {"ru": "Статистика модерации", "en": "Moderation statistics"},
+    "admin_btn_publish_examples": {"ru": "Опубликовать примеры", "en": "Publish examples"},
+    "admin_moderation_stats_title": {
+        "ru": "<b>Статистика модерации</b>\nНеделя: {period}",
+        "en": "<b>Moderation statistics</b>\nWeek: {period}",
+    },
+    "admin_moderation_stats_total": {"ru": "Активных за неделю: {count}", "en": "Active this week: {count}"},
+    "admin_moderation_stats_empty": {"ru": "За эту неделю действий нет.", "en": "No activity for this week."},
+    "admin_moderation_stats_person": {
+        "ru": "{username} · <tg-spoiler>{admin_id}</tg-spoiler> — проверено: {checked}, за: {yes}, против: {no}, решений: {decisions}",
+        "en": "{username} · <tg-spoiler>{admin_id}</tg-spoiler> — reviewed: {checked}, yes: {yes}, no: {no}, decisions: {decisions}",
+    },
+    "admin_moderation_stats_person_button": {
+        "ru": "{username} · {checked} · {yes}/{no}",
+        "en": "{username} · {checked} · {yes}/{no}",
+    },
+    "admin_moderation_stats_detail": {
+        "ru": "<b>{username}</b> · <tg-spoiler>{admin_id}</tg-spoiler>\nНеделя: {period}\nПроверено плагинов: {checked}\nПропущено (за): {yes}\nПротив: {no}",
+        "en": "<b>{username}</b> · <tg-spoiler>{admin_id}</tg-spoiler>\nWeek: {period}\nPlugins reviewed: {checked}\nPassed (yes): {yes}\nAgainst: {no}",
+    },
+    "admin_moderation_stats_yes": {"ru": "\n<b>За:</b>", "en": "\n<b>Yes:</b>"},
+    "admin_moderation_stats_no": {"ru": "\n<b>Против:</b>", "en": "\n<b>No:</b>"},
+    "admin_moderation_stats_decisions": {"ru": "\n<b>Окончательные решения:</b>", "en": "\n<b>Final decisions:</b>"},
+    "admin_moderation_stats_none": {"ru": "—", "en": "—"},
+    "admin_moderation_stats_vote": {"ru": "• {request}\n  Причина: {reason}", "en": "• {request}\n  Reason: {reason}"},
+    "admin_moderation_stats_decision": {"ru": "• {request} — {status}", "en": "• {request} — {status}"},
+    "admin_examples_result": {
+        "ru": "<b>Примеры работы</b>\nОпубликовано: {published}\nОжидают комментарий: {pending}\nНеопределённый результат: {uncertain}",
+        "en": "<b>Plugin examples</b>\nPublished: {published}\nWaiting for discussion: {pending}\nUncertain result: {uncertain}",
+    },
+    "request_status_published": {"ru": "опубликовано", "en": "published"},
+    "request_status_rejected": {"ru": "отклонено", "en": "rejected"},
+    "request_status_rework": {"ru": "доработка", "en": "rework"},
+    "request_status_deleted": {"ru": "удалено", "en": "deleted"},
     "btn_icons": {"ru": "Иконки", "en": "Icons"},
     "btn_idea": {"ru": "Предложить идею", "en": "Suggest an idea"},
     "btn_joinly": {"ru": "Joinly", "en": "Joinly"},

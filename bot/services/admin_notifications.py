@@ -162,12 +162,21 @@ async def send_review_notification(bot, chat_id: int, entry: dict[str, Any], tex
     payload = entry.get("payload", {}) if isinstance(entry.get("payload"), dict) else {}
     user_id = int(payload.get("user_id") or 0)
     sent_message_ids: list[int] = []
+    request_type = str(entry.get("type") or "new")
+    can_delete = request_type == "delete" and int(chat_id) in get_admins_super()
     try:
         msg = await bot.send_message(
             chat_id,
             text,
             parse_mode=ParseMode.HTML,
-            reply_markup=admin_review_kb(request_id, user_id, allow_publish=False),
+            reply_markup=admin_review_kb(
+                request_id,
+                user_id,
+                submit_label=t("admin_submit_delete", "ru") if request_type == "delete" else None,
+                submit_callback=f"adm:delete:{request_id}" if request_type == "delete" else None,
+                allow_publish=can_delete,
+                allow_vote=request_type != "delete",
+            ),
             disable_web_page_preview=True,
         )
         sent_message_ids.append(int(msg.message_id))
@@ -246,6 +255,7 @@ async def refresh_admin_notify_messages(bot, entry: dict) -> None:
 
     user_id = int(payload.get("user_id") or 0)
     text = forum_text_with_votes(entry)
+    request_type = str(entry.get("type") or "new")
 
     for chat_id_str, info in mapping.items():
         if not isinstance(info, dict):
@@ -263,7 +273,14 @@ async def refresh_admin_notify_messages(bot, entry: dict) -> None:
                 chat_id=chat_id,
                 message_id=message_id,
                 parse_mode=ParseMode.HTML,
-                reply_markup=admin_review_kb(request_id, user_id, allow_publish=False),
+                reply_markup=admin_review_kb(
+                    request_id,
+                    user_id,
+                    submit_label=t("admin_submit_delete", "ru") if request_type == "delete" else None,
+                    submit_callback=f"adm:delete:{request_id}" if request_type == "delete" else None,
+                    allow_publish=request_type == "delete" and chat_id in get_admins_super(),
+                    allow_vote=request_type != "delete",
+                ),
                 disable_web_page_preview=True,
             )
         except Exception:
@@ -271,7 +288,14 @@ async def refresh_admin_notify_messages(bot, entry: dict) -> None:
                 await bot.edit_message_reply_markup(
                     chat_id=chat_id,
                     message_id=message_id,
-                    reply_markup=admin_review_kb(request_id, user_id, allow_publish=False),
+                    reply_markup=admin_review_kb(
+                        request_id,
+                        user_id,
+                        submit_label=t("admin_submit_delete", "ru") if request_type == "delete" else None,
+                        submit_callback=f"adm:delete:{request_id}" if request_type == "delete" else None,
+                        allow_publish=request_type == "delete" and chat_id in get_admins_super(),
+                        allow_vote=request_type != "delete",
+                    ),
                 )
             except Exception:
                 pass
@@ -391,7 +415,14 @@ async def notify_superadmins_if_threshold(bot, entry: dict) -> None:
             reply_markup = (
                 admin_appeal_decision_kb(request_id, lang=get_lang(admin_id))
                 if is_appeal else
-                admin_review_kb(request_id, 0, lang=get_lang(admin_id))
+                admin_review_kb(
+                    request_id,
+                    0,
+                    submit_label=t("admin_submit_delete", get_lang(admin_id)) if entry.get("type") == "delete" else None,
+                    submit_callback=f"adm:delete:{request_id}" if entry.get("type") == "delete" else None,
+                    lang=get_lang(admin_id),
+                    allow_vote=entry.get("type") != "delete",
+                )
             )
             await bot.send_message(
                 admin_id,

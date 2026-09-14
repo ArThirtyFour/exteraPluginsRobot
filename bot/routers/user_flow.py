@@ -330,8 +330,6 @@ async def _route_start_payload_message(message: Message, state: FSMContext, lang
 
     if raw_value.startswith(("modvote_yes_", "modvote_no_")):
         vote = "yes" if raw_value.startswith("modvote_yes_") else "no"
-        # unquote keeps already-sent links from the old percent-encoded format
-        # working after switching new links to Bot API-safe tokens.
         request_token = unquote(raw_value.split("_", 2)[2])
         entry = get_request_by_deeplink_token(request_token)
         request_payload = entry.get("payload", {}) if isinstance(entry, dict) else {}
@@ -1230,7 +1228,12 @@ async def on_profile_delete(cb: CallbackQuery, state: FSMContext) -> None:
     )
     await _discard_pending_comment_media_groups(cb)
     await state.set_state(UserFlow.entering_admin_comment)
-    await state.update_data(pending_comment=None, pending_comment_media=[], comment_required=True)
+    await state.update_data(
+        pending_comment=None,
+        pending_comment_media=[],
+        comment_required=True,
+        media_required=False,
+    )
     await answer(cb, t("ask_delete_reason", lang, max=COMMENT_MEDIA_LIMIT),
                  comment_skip_kb(lang, required=True), "delete")
     await ack(cb)
@@ -1528,8 +1531,18 @@ async def on_update_edit(cb: CallbackQuery, state: FSMContext) -> None:
         )
         await _discard_pending_comment_media_groups(cb)
         await state.set_state(UserFlow.entering_admin_comment)
-        await state.update_data(pending_comment=None, pending_comment_media=[], comment_required=False)
-        await answer(cb, t("ask_admin_comment", lang, max=COMMENT_MEDIA_LIMIT), comment_skip_kb(lang), "update")
+        await state.update_data(
+            pending_comment=None,
+            pending_comment_media=[],
+            comment_required=False,
+            media_required=True,
+        )
+        await answer(
+            cb,
+            t("ask_update_example", lang, max=COMMENT_MEDIA_LIMIT),
+            comment_skip_kb(lang, required=True),
+            "update",
+        )
         await cb.answer()
         return
 
@@ -2331,8 +2344,18 @@ async def on_draft_submit(cb: CallbackQuery, state: FSMContext) -> None:
     )
     await _discard_pending_comment_media_groups(cb)
     await state.set_state(UserFlow.entering_admin_comment)
-    await state.update_data(pending_comment=None, pending_comment_media=[], comment_required=False)
-    await answer(cb, t("ask_admin_comment", lang, max=COMMENT_MEDIA_LIMIT), comment_skip_kb(lang), "new")
+    await state.update_data(
+        pending_comment=None,
+        pending_comment_media=[],
+        comment_required=False,
+        media_required=True,
+    )
+    await answer(
+        cb,
+        t("ask_submission_example", lang, max=COMMENT_MEDIA_LIMIT),
+        comment_skip_kb(lang, required=True),
+        "new",
+    )
     await ack(cb)
 
 
@@ -2457,25 +2480,45 @@ async def _render_comment_state(target, state: FSMContext, lang: str) -> None:
     data = await state.get_data()
     comment = str(data.get("pending_comment") or "").strip()
     media = data.get("pending_comment_media") or []
-    required = bool(data.get("comment_required"))
-    has_content = bool(comment or media)
-    if required and not comment:
-        has_content = False
-    if not has_content:
-        text = t("ask_delete_reason" if required else "ask_admin_comment", lang, max=COMMENT_MEDIA_LIMIT)
+    comment_required = bool(data.get("comment_required"))
+    media_required = bool(data.get("media_required"))
+    ready = bool(comment or media)
+    if comment_required and not comment:
+        ready = False
+    if media_required and not media:
+        ready = False
+    if not comment and not media:
+        if comment_required:
+            text = t("ask_delete_reason", lang, max=COMMENT_MEDIA_LIMIT)
+        elif media_required:
+            key = "ask_update_example" if data.get("pending_request_type") == "update" else "ask_submission_example"
+            text = t(key, lang, max=COMMENT_MEDIA_LIMIT)
+        else:
+            text = t("ask_admin_comment", lang, max=COMMENT_MEDIA_LIMIT)
     else:
+        state_key = "comment_state"
+        if media_required:
+            state_key = "comment_state_update_media_required" if data.get("pending_request_type") == "update" else "comment_state_media_required"
         text = t(
-            "comment_state", lang,
+            state_key, lang,
             comment=strip_blockquote_tags(comment) or t("comment_no_text", lang),
             count=len(media), max=COMMENT_MEDIA_LIMIT,
         )
-    await answer(target, text, comment_skip_kb(lang, has_content, len(media), required),
-                 "delete" if required else "new")
+    await answer(
+        target,
+        text,
+        comment_skip_kb(lang, ready, len(media), comment_required or media_required),
+        "delete" if comment_required else ("update" if data.get("pending_request_type") == "update" else "new"),
+    )
 
 
 @router.callback_query(UserFlow.entering_admin_comment, F.data == "comment:skip")
 async def on_admin_comment_skip(cb: CallbackQuery, state: FSMContext) -> None:
     if not await _ensure_not_banned(cb, state):
+        return
+    data = await state.get_data()
+    if data.get("media_required"):
+        await cb.answer(t("submission_example_required", await get_language(cb, state)), show_alert=True)
         return
     await _discard_pending_comment_media_groups(cb)
     await state.update_data(pending_comment=None, pending_comment_media=[])
@@ -2502,6 +2545,9 @@ async def on_admin_comment_send(cb: CallbackQuery, state: FSMContext) -> None:
     comment = str(data.get("pending_comment") or "").strip()
     if bool(data.get("comment_required")) and not comment:
         await cb.answer(t("delete_reason_required", await get_language(cb, state)), show_alert=True)
+        return
+    if bool(data.get("media_required")) and not data.get("pending_comment_media"):
+        await cb.answer(t("submission_example_required", await get_language(cb, state)), show_alert=True)
         return
     await _finalize_submission(
         cb, state,
@@ -2560,6 +2606,14 @@ async def _finalize_submission(
     request_type = data.get("pending_request_type", "new")
     reply_key = data.get("pending_reply_key", "submission_sent")
     lang = await get_language(target, state)
+
+    if request_type in {"new", "update"} and not media:
+        message = t("submission_example_required", lang)
+        if isinstance(target, CallbackQuery):
+            await target.answer(message, show_alert=True)
+        else:
+            await target.answer(message)
+        return
 
     if comment:
         payload["admin_comment"] = comment

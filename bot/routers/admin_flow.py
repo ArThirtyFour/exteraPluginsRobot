@@ -55,6 +55,9 @@ from bot.keyboards import (
     admin_source_detail_kb,
     admin_source_del_confirm_kb,
     admin_menu_kb,
+    admin_stats_kb,
+    moderation_person_kb,
+    moderation_week_kb,
     admin_notification_settings_kb,
     admin_plugins_list_kb,
     admin_appeal_decision_kb,
@@ -375,6 +378,28 @@ def _comment_media_of_entry(entry: dict) -> list:
     if not isinstance(payload, dict):
         return []
     return [m for m in (payload.get("comment_media") or []) if isinstance(m, dict) and m.get("file_id")]
+
+
+async def _send_review_document(cb: CallbackQuery, entry: dict, reply_message) -> None:
+    if not cb.message:
+        return
+    payload = entry.get("payload", {}) if isinstance(entry.get("payload"), dict) else {}
+    plugin = payload.get("plugin", {}) if isinstance(payload.get("plugin"), dict) else {}
+    file_path = str(plugin.get("file_path") or "").strip()
+    stored_file_id = str(payload.get("moderation_file_id") or plugin.get("file_id") or "").strip()
+    document = FSInputFile(file_path) if file_path and Path(file_path).is_file() else stored_file_id or None
+    if not document:
+        return
+    try:
+        await cb.bot.send_document(
+            cb.message.chat.id,
+            document=document,
+            disable_notification=True,
+            reply_to_message_id=reply_message.message_id if reply_message else cb.message.message_id,
+            allow_sending_without_reply=True,
+        )
+    except Exception:
+        logger.exception("event=admin.review_file_failed request_id=%s", entry.get("id"))
 
 
 def _author_comment_block(entry: dict) -> str:
@@ -1020,18 +1045,33 @@ async def _render_admins_manage(cb: CallbackQuery, state: FSMContext, field: str
     admin_ids = sorted({int(x) for x in (config.get(field, []) or []) if str(x).isdigit()})
     await state.update_data(config_field=field, config_message_id=cb.message.message_id if cb.message else None)
     await state.set_state(AdminFlow.editing_config)
-    title = _admins_title(field, cb)
-
-    links = "\n".join([f"<a href=\"tg://user?id={aid}\">{aid}</a>" for aid in admin_ids])
-    links_block = f"\n\n{links}" if links else ""
-    msg = await answer(
-        cb,
-        f"<b>{title}</b>\n\n{_tr(cb, 'admin_choose_action')}{links_block}",
-        admin_manage_admins_kb(field, admin_ids, lang=lang),
-        "admin",
-    )
+    text, keyboard = await _admins_manage_view(cb.bot, cb, field, admin_ids, lang)
+    msg = await answer(cb, text, keyboard, "admin")
     if msg:
         await state.update_data(config_message_id=msg.message_id)
+
+
+async def _admins_manage_view(bot, target, field: str, admin_ids: list[int], lang: str):
+    title = _admins_title(field, target)
+    identities = await _resolve_admin_identities(bot, admin_ids, lang)
+    lines = [
+        f"<b>{title}</b>",
+        _admin_staff_counts(target),
+        _tr(target, "admin_choose_action"),
+    ]
+    lines.extend(
+        _tr(target, "admin_identity_line", username=identities[admin_id]["html"], admin_id=admin_id)
+        for admin_id in admin_ids
+    )
+    return (
+        "\n\n".join(lines),
+        admin_manage_admins_kb(
+            field,
+            admin_ids,
+            lang=lang,
+            labels={admin_id: identities[admin_id]["button"] for admin_id in admin_ids},
+        ),
+    )
 
 
 def _admins_title(field: str, target: CallbackQuery | Message | int | None) -> str:
@@ -1041,6 +1081,58 @@ def _admins_title(field: str, target: CallbackQuery | Message | int | None) -> s
         "admins_icons": "admin_cfg_admins_icons",
     }.get(field, "admin_cfg_admins")
     return _tr(target, key)
+
+
+def _admin_staff_counts(target: CallbackQuery | Message | int | None) -> str:
+    superadmins = get_admins_super()
+    moderators = get_admins() - superadmins
+    return _tr(
+        target,
+        "admin_staff_counts",
+        superadmins=len(superadmins),
+        moderators=len(moderators),
+    )
+
+
+async def _resolve_admin_identities(
+    bot,
+    admin_ids: list[int],
+    lang: str,
+    hints: dict[int, str] | None = None,
+) -> dict[int, dict[str, str]]:
+    stored = {int(user["user_id"]): user for user in list_users() if str(user.get("user_id", "")).isdigit()}
+    hints = hints or {}
+    result: dict[int, dict[str, str]] = {}
+    for admin_id in admin_ids:
+        hint = str(hints.get(admin_id) or "").strip().lstrip("@")
+        if hint in {"unknown", f"id{admin_id}"}:
+            hint = ""
+        user = stored.get(admin_id, {})
+        username = hint or str(user.get("username") or "").strip().lstrip("@")
+        name = str(user.get("full_name") or user.get("first_name") or "").strip()
+        if not username:
+            try:
+                chat = await bot.get_chat(admin_id)
+                username = str(getattr(chat, "username", "") or "").strip().lstrip("@")
+                name = str(
+                    getattr(chat, "full_name", "")
+                    or getattr(chat, "first_name", "")
+                    or name
+                ).strip()
+            except Exception:
+                pass
+        if username:
+            button = f"@{username}"
+            html_label = f"@{plain_html(username)}"
+        else:
+            button = name or t("admin_unknown_username", lang)
+            html_label = (
+                f'<a href="tg://user?id={admin_id}">{plain_html(name)}</a>'
+                if name
+                else t("admin_unknown_username", lang)
+            )
+        result[admin_id] = {"button": button[:64], "html": html_label}
+    return result
 
 
 async def _render_broadcast_enter(cb: CallbackQuery, state: FSMContext) -> None:
@@ -1127,11 +1219,12 @@ async def _render_queue(cb: CallbackQuery, state: FSMContext, token: str) -> Non
         else:
             prefix = ""
             row_icon = None
-        my = _my_vote(entry, viewer_id)
-        if my == "yes":
-            prefix = "✅ " + prefix
-        elif my == "no":
-            prefix = "❌ " + prefix
+        if request_type != "delete":
+            my = _my_vote(entry, viewer_id)
+            if my == "yes":
+                prefix = "✅ " + prefix
+            elif my == "no":
+                prefix = "❌ " + prefix
         if entry.get("status") == "error" or payload.get("last_publish_error"):
             prefix = f"Ошибка: {prefix}"
             row_icon = row_icon or "warning"
@@ -1186,24 +1279,29 @@ async def _render_review(cb: CallbackQuery, state: FSMContext, token: str) -> No
 
     draft_text = _render_request_draft(entry)
     full_text = f"{draft_text}\n\n{_review_meta_block(entry)}"
+    is_delete = entry.get("type") == "delete"
     msg = await answer(
         cb,
         full_text,
         admin_review_kb(
             request_id,
             payload.get("user_id", 0),
+            submit_label=_tr(cb, "admin_submit_delete") if is_delete else None,
+            submit_callback=f"adm:delete:{request_id}" if is_delete else None,
             lang=lang,
             allow_publish=_is_super_admin(cb),
+            allow_vote=not is_delete,
             media_count=len(_comment_media_of_entry(entry)),
         ),
         "new",
     )
     if msg:
         await state.update_data(draft_message_id=msg.message_id)
+    await _send_review_document(cb, entry, msg)
 
 
 _SUPER_ONLY_NAV_PREFIXES = (
-    "adm:config", "adm:broadcast", "adm:banned", "adm:blocklist", "adm:backup",
+    "adm:config", "adm:broadcast", "adm:stats", "adm:modstats", "adm:banned", "adm:blocklist", "adm:backup",
     "adm:maint", "adm:sources", "adm:audit", "adm:auditlog", "adm:rejreq", "adm:quiz",
     "adm:edit_plugins", "adm:link_author", "adm:icons",
 )
@@ -3699,16 +3797,11 @@ async def on_admins_remove(cb: CallbackQuery, state: FSMContext) -> None:
     save_config(config)
     invalidate("config")
 
-    title = _admins_title(field, cb)
-    msg = await answer(
-        cb,
-        f"<b>{title}</b>\n\n{_tr(cb, 'admin_removed', admin_id=admin_id)}",
-        admin_manage_admins_kb(field, updated, lang=lang),
-        "admin",
-    )
+    text, keyboard = await _admins_manage_view(cb.bot, cb, field, updated, lang)
+    msg = await answer(cb, text, keyboard, "admin")
     if msg:
         await state.update_data(config_message_id=msg.message_id)
-    await ack(cb, _tr(cb, "admin_removed_short", admin_id=admin_id))
+    await ack(cb, _tr(cb, "admin_removed_short"))
 
 
 @router.callback_query(F.data == "adm:notifs")
@@ -3749,9 +3842,11 @@ async def on_admin_notifications_toggle(cb: CallbackQuery, state: FSMContext) ->
 @router.callback_query(F.data == "adm:stats")
 async def on_admin_stats(cb: CallbackQuery, state: FSMContext) -> None:
     lang = _lang_for(cb)
-    if not _ensure_admin(cb):
+    if not _is_super_admin(cb):
         await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
         return
+
+    await _nav_push(state, "adm:stats")
 
     users = list_users()
     total = len(users)
@@ -3760,7 +3855,7 @@ async def on_admin_stats(cb: CallbackQuery, state: FSMContext) -> None:
         user_lang = (user.get("language") or "unknown").lower()
         counts[user_lang] = counts.get(user_lang, 0) + 1
 
-    lines = [_tr(cb, "admin_label_users", total=total)]
+    lines = [_tr(cb, "admin_label_users", total=total), _admin_staff_counts(cb)]
     if counts:
         for user_lang, count in sorted(counts.items()):
             label = user_lang.upper() if user_lang not in {"unknown", ""} else _tr(cb, "admin_label_not_set")
@@ -3777,9 +3872,168 @@ async def on_admin_stats(cb: CallbackQuery, state: FSMContext) -> None:
     except Exception:
         logger.exception("event=admin_stats.opens_failed")
 
-    msg = await answer(cb, "\n".join(lines), admin_menu_kb(_admin_menu_role(cb), lang=lang), "admin")
+    msg = await answer(cb, "\n".join(lines), admin_stats_kb(_admin_menu_role(cb), lang=lang), "admin")
     if msg:
         await state.update_data(stats_message_id=msg.message_id)
+    await ack(cb)
+
+
+def _moderation_week_label(value: str, lang: str) -> str:
+    from bot.services.moderation_stats import week_dates
+
+    start, end = week_dates(value)
+    if lang == "en":
+        return f"{start.strftime('%d.%m.%Y')}–{end.strftime('%d.%m.%Y')}"
+    return f"{start.strftime('%d.%m.%Y')}–{end.strftime('%d.%m.%Y')}"
+
+
+def _moderator_from_week(report: dict, user_id: int) -> dict | None:
+    for moderator in report.get("moderators") or []:
+        if isinstance(moderator, dict) and int(moderator.get("user_id") or 0) == int(user_id):
+            return moderator
+    return None
+
+
+@router.callback_query(F.data.regexp(r"^adm:modstats:(?:current|\d{4}-\d{2}-\d{2})$"))
+async def on_admin_moderation_stats(cb: CallbackQuery, state: FSMContext) -> None:
+    if not _is_super_admin(cb):
+        await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
+        return
+    from bot.services.moderation_stats import moderation_week, shift_week, sync_moderation_history, week_key
+
+    lang = _lang_for(cb)
+    raw_week = cb.data.rsplit(":", 1)[1]
+    selected_week = week_key() if raw_week == "current" else week_key(raw_week)
+    sync_moderation_history()
+    report = moderation_week(selected_week)
+    moderators = report.get("moderators") or []
+    identities = await _resolve_admin_identities(
+        cb.bot,
+        [int(item.get("user_id") or 0) for item in moderators],
+        lang,
+        {
+            int(item.get("user_id") or 0): str(item.get("username") or "")
+            for item in moderators
+        },
+    )
+    lines = [
+        _tr(cb, "admin_moderation_stats_title", period=_moderation_week_label(selected_week, lang)),
+        _admin_staff_counts(cb),
+        _tr(cb, "admin_moderation_stats_total", count=len(moderators)),
+    ]
+    if not moderators:
+        lines.append(_tr(cb, "admin_moderation_stats_empty"))
+    else:
+        for item in moderators:
+            lines.append(_tr(
+                cb,
+                "admin_moderation_stats_person",
+                username=identities[int(item["user_id"])]["html"],
+                admin_id=int(item["user_id"]),
+                checked=item["checked"],
+                yes=len(item["yes"]),
+                no=len(item["no"]),
+                decisions=len(item["decisions"]),
+            ))
+    current = week_key()
+    next_week = shift_week(selected_week, 1) if selected_week < current else None
+    items = [
+        (
+            item["user_id"],
+            identities[int(item["user_id"])]["button"],
+            item["checked"],
+            len(item["yes"]),
+            len(item["no"]),
+        )
+        for item in moderators
+    ]
+    await answer(
+        cb,
+        "\n".join(lines),
+        moderation_week_kb(items, selected_week, shift_week(selected_week, -1), next_week, lang),
+        "admin",
+    )
+    await ack(cb)
+
+
+@router.callback_query(F.data.regexp(r"^adm:modstats:user:\d{4}-\d{2}-\d{2}:\d+$"))
+async def on_admin_moderation_person(cb: CallbackQuery, state: FSMContext) -> None:
+    if not _is_super_admin(cb):
+        await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
+        return
+    from bot.services.moderation_stats import moderation_week
+
+    lang = _lang_for(cb)
+    parts = cb.data.split(":")
+    selected_week = parts[3]
+    moderator = _moderator_from_week(moderation_week(selected_week), int(parts[4]))
+    if not moderator:
+        await cb.answer(_tr(cb, "not_found"), show_alert=True)
+        return
+    identity = (await _resolve_admin_identities(
+        cb.bot,
+        [int(moderator["user_id"])],
+        lang,
+        {int(moderator["user_id"]): str(moderator.get("username") or "")},
+    ))[int(moderator["user_id"])]
+    lines = [
+        _tr(
+            cb,
+            "admin_moderation_stats_detail",
+            username=identity["html"],
+            admin_id=int(moderator["user_id"]),
+            period=_moderation_week_label(selected_week, lang),
+            checked=moderator["checked"],
+            yes=len(moderator["yes"]),
+            no=len(moderator["no"]),
+        )
+    ]
+    for value, title_key in (("yes", "admin_moderation_stats_yes"), ("no", "admin_moderation_stats_no")):
+        lines.append(_tr(cb, title_key))
+        events = moderator[value]
+        if not events:
+            lines.append(_tr(cb, "admin_moderation_stats_none"))
+        for event in events:
+            lines.append(_tr(
+                cb,
+                "admin_moderation_stats_vote",
+                request=plain_html(event.get("request_name") or event.get("request_id") or "—"),
+                reason=plain_html(event.get("reason") or "—"),
+            ))
+    lines.append(_tr(cb, "admin_moderation_stats_decisions"))
+    if not moderator["decisions"]:
+        lines.append(_tr(cb, "admin_moderation_stats_none"))
+    for event in moderator["decisions"]:
+        lines.append(_tr(
+            cb,
+            "admin_moderation_stats_decision",
+            request=plain_html(event.get("request_name") or event.get("request_id") or "—"),
+            status=plain_html(_tr(cb, f"request_status_{event.get('value')}") if f"request_status_{event.get('value')}" in TEXTS else event.get("value") or "—"),
+        ))
+    await answer(cb, "\n".join(lines), moderation_person_kb(selected_week, lang), "admin")
+    await ack(cb)
+
+
+@router.callback_query(F.data == "adm:examples:publish")
+async def on_admin_publish_examples(cb: CallbackQuery, state: FSMContext) -> None:
+    if not _is_super_admin(cb):
+        await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
+        return
+    from bot.services.example_media import process_pending_example_media
+
+    result = await process_pending_example_media(cb.bot, limit=100)
+    await answer(
+        cb,
+        _tr(
+            cb,
+            "admin_examples_result",
+            published=result.get("published", 0),
+            pending=result.get("pending", 0),
+            uncertain=result.get("uncertain", 0),
+        ),
+        admin_plugins_section_kb(lang=_lang_for(cb), role=_admin_menu_role(cb)),
+        "admin",
+    )
     await ack(cb)
 
 
@@ -3917,25 +4171,22 @@ async def on_admin_config_value(message: Message, state: FSMContext) -> None:
         config[field] = updated
         save_config(config)
         invalidate("config")
+        view_text, keyboard = await _admins_manage_view(message.bot, message, field, updated, lang)
         config_message_id = data.get("config_message_id")
         if config_message_id:
             try:
                 await message.bot.edit_message_text(
-                    f"<b>{_admins_title(field, message)}</b>\n\n{_tr(message, 'admin_added', admin_id=admin_id)}",
+                    view_text,
                     chat_id=message.chat.id,
                     message_id=config_message_id,
                     parse_mode=ParseMode.HTML,
-                    reply_markup=admin_manage_admins_kb(field, sorted(set(updated)), lang=lang),
+                    reply_markup=keyboard,
                     disable_web_page_preview=True,
                 )
                 return
             except Exception:
                 pass
-        sent_msg = await message.answer(
-            _tr(message, "admin_added_short", admin_id=admin_id),
-            disable_web_page_preview=True,
-            parse_mode=ParseMode.HTML,
-        )
+        sent_msg = await answer(message, view_text, keyboard, "admin")
         if sent_msg:
             await state.update_data(config_message_id=sent_msg.message_id)
         return
@@ -4242,11 +4493,12 @@ async def on_admin_queue(cb: CallbackQuery, state: FSMContext) -> None:
             row_icon = "updates"
         else:
             prefix = ""
-        my = _my_vote(entry, viewer_id)
-        if my == "yes":
-            prefix = "✅ " + prefix
-        elif my == "no":
-            prefix = "❌ " + prefix
+        if request_type != "delete":
+            my = _my_vote(entry, viewer_id)
+            if my == "yes":
+                prefix = "✅ " + prefix
+            elif my == "no":
+                prefix = "❌ " + prefix
         if entry.get("status") == "error" or payload.get("last_publish_error"):
             prefix = f"Ошибка: {prefix}"
             row_icon = row_icon or "warning"
@@ -4955,7 +5207,6 @@ async def on_admin_review(cb: CallbackQuery, state: FSMContext) -> None:
             f"<b>От:</b> {user_link}"
         )
 
-    file_path = plugin.get("file_path") or payload.get("icon", {}).get("file_path")
     if request_type == "delete":
         kb = admin_review_kb(
             request_id,
@@ -4964,6 +5215,7 @@ async def on_admin_review(cb: CallbackQuery, state: FSMContext) -> None:
             submit_callback=f"adm:delete:{request_id}",
             lang=lang,
             allow_publish=allow_publish,
+            allow_vote=False,
             media_count=len(_comment_media_of_entry(entry)),
         )
     else:
@@ -4974,26 +5226,7 @@ async def on_admin_review(cb: CallbackQuery, state: FSMContext) -> None:
     review_img = {"update": "update", "delete": "delete"}.get(entry.get("type"), "new")
     review_msg = await answer(cb, text, kb, review_img)
 
-    if file_path and Path(file_path).exists() and cb.message:
-        data = await state.get_data()
-        sent_files = data.get("sent_review_files")
-        if not isinstance(sent_files, list):
-            sent_files = []
-
-        if request_id not in sent_files:
-            try:
-                reply_to_message_id = review_msg.message_id if review_msg else cb.message.message_id
-                await cb.bot.send_document(
-                    cb.message.chat.id,
-                    document=FSInputFile(file_path),
-                    disable_notification=True,
-                    reply_to_message_id=reply_to_message_id,
-                    allow_sending_without_reply=True,
-                )
-                sent_files.append(request_id)
-                await state.update_data(sent_review_files=sent_files)
-            except Exception:
-                pass
+    await _send_review_document(cb, entry, review_msg)
 
     await ack(cb)
 
@@ -5037,6 +5270,7 @@ async def on_admin_back_review(cb: CallbackQuery, state: FSMContext) -> None:
             submit_callback=f"adm:delete:{request_id}",
             lang=lang,
             allow_publish=_is_super_admin(cb),
+            allow_vote=False,
         )
     else:
         kb = admin_review_kb(request_id, user_id, lang=lang, allow_publish=_is_super_admin(cb),
@@ -5845,7 +6079,13 @@ async def on_admin_publish(cb: CallbackQuery, state: FSMContext) -> None:
     try:
         if request_type == "update":
             old_plugin = payload.get("old_plugin", {})
-            result = await update_plugin(entry, old_plugin, cb.bot)
+            result = await update_plugin(
+                entry,
+                old_plugin,
+                cb.bot,
+                actor=_admin_actor_label(cb),
+                actor_id=_actor_id(cb),
+            )
             update_slug = payload.get("update_slug") or payload.get("plugin", {}).get("id")
             await _notify_subscribers(
                 cb.bot,
@@ -5855,7 +6095,7 @@ async def on_admin_publish(cb: CallbackQuery, state: FSMContext) -> None:
             )
             notify_key = "notify_update_published"
         elif submission_type == "icon":
-            result = await publish_icon(entry)
+            result = await publish_icon(entry, actor=_admin_actor_label(cb), actor_id=_actor_id(cb))
             notify_key = "notify_icon_published"
         elif request_type == "delete":
             delete_slug = payload.get("delete_slug") or payload.get("plugin", {}).get("id")
@@ -5879,8 +6119,24 @@ async def on_admin_publish(cb: CallbackQuery, state: FSMContext) -> None:
             result = {"link": plugin_entry.get("channel_message", {}).get("link", "")}
             notify_key = "notify_deleted"
         else:
-            result = await publish_plugin(entry, cb.bot)
+            result = await publish_plugin(
+                entry,
+                cb.bot,
+                actor=_admin_actor_label(cb),
+                actor_id=_actor_id(cb),
+            )
             notify_key = "notify_published"
+
+        if request_type == "update":
+            update_request_payload(request_id, {"example_changelog_pending": True})
+
+        if request_type in {"new", "update"} and (
+            _comment_media_of_entry(entry) or request_type == "update"
+        ):
+            from bot.helpers import spawn_background
+            from bot.services.example_media import publish_example_media
+
+            spawn_background(publish_example_media(cb.bot, request_id))
 
         try:
             await finalize_admin_notify_messages(
@@ -6392,11 +6648,56 @@ DEFAULT_APPROVE_TEMPLATES = [
     "Замечаний нет, к публикации готов",
 ]
 
-_TEMPLATE_CONFIG_KEYS = {"reject": "reject_templates", "approve": "approve_templates"}
+DEFAULT_REJECT_TEMPLATES = [
+    "Плагин не даёт заметной пользы по сравнению с уже опубликованными решениями",
+    "Функция уже есть в exteraGram, AyuGram, Telegram или существующем плагине",
+    "Реализация дублирует существующий плагин без заметных преимуществ",
+    "Задача слишком простая для отдельного плагина",
+    "В работе найдены критические ошибки или нестабильность",
+    "Плагин не работает на актуальной версии клиента",
+    "Метаданные заполнены некорректно либо файл не проходит проверку",
+    "Описание не объясняет назначение плагина или способ использования",
+    "В коде есть подозрительное действие, скрытая загрузка или небезопасная логика",
+    "Код требует доработки и повторной проверки перед публикацией",
+]
+
+DEFAULT_UPDATE_APPROVE_TEMPLATES = [
+    "Версия повышена корректно, метаданные обновления заполнены",
+    "Обновление проверено на актуальной версии клиента — работает стабильно",
+    "Исправлены заявленные ошибки, результат соответствует чейнджлогу",
+    "Восстановлена совместимость с актуальной версией exteraGram/AyuGram",
+    "Добавлены полезные функции без ухудшения существующего поведения",
+    "Улучшены производительность и стабильность плагина",
+    "Критических ошибок и регрессий после обновления не обнаружено",
+    "Исправлена проблема безопасности или нежелательное поведение",
+    "Код обновления аккуратный, лишних зависимостей и скрытых действий нет",
+    "Замечаний к обновлению нет, новая версия готова к публикации",
+]
+
+DEFAULT_UPDATE_REJECT_TEMPLATES = [
+    "Версия плагина должна быть строго выше опубликованной",
+    "Минимальная версия клиента указана ниже допустимой или заполнена неверно",
+    "Заявленные изменения отсутствуют в файле или не соответствуют чейнджлогу",
+    "Чейнджлог отсутствует либо не объясняет, что именно изменилось",
+    "Обновление содержит критические ошибки или ломает существующие функции",
+    "Обновление не работает на актуальной версии exteraGram/AyuGram",
+    "ID плагина не совпадает с ID опубликованной версии",
+    "Метаданные обновления заполнены некорректно или не парсятся",
+    "В обновлении появился подозрительный код, скрытая загрузка или нежелательное действие",
+    "После обновления качество, стабильность или удобство плагина ухудшились",
+]
+
+_TEMPLATE_CONFIG_KEYS = {
+    "reject": "reject_templates",
+    "approve": "approve_templates",
+    "update_reject": "update_reject_templates",
+    "update_approve": "update_approve_templates",
+}
 
 
 def _template_kind(raw: str) -> str:
-    return "approve" if str(raw) == "approve" else "reject"
+    value = str(raw or "")
+    return value if value in _TEMPLATE_CONFIG_KEYS else "reject"
 
 
 def _load_templates(kind: str = "reject") -> list[str]:
@@ -6404,7 +6705,13 @@ def _load_templates(kind: str = "reject") -> list[str]:
     cfg = get_config()
     raw = cfg.get(_TEMPLATE_CONFIG_KEYS[kind])
     if not isinstance(raw, list):
-        return list(DEFAULT_APPROVE_TEMPLATES) if kind == "approve" else []
+        if kind == "update_approve":
+            return list(DEFAULT_UPDATE_APPROVE_TEMPLATES)
+        if kind == "update_reject":
+            return list(DEFAULT_UPDATE_REJECT_TEMPLATES)
+        if kind == "approve":
+            return list(DEFAULT_APPROVE_TEMPLATES)
+        return list(DEFAULT_REJECT_TEMPLATES)
     return [str(x).strip() for x in raw if str(x).strip()]
 
 
@@ -6427,8 +6734,18 @@ async def _render_rejtpl_cfg(target, state: FSMContext, kind: str = "reject") ->
     lang = _lang_for(target)
     kind = _template_kind(kind)
     templates = _load_templates(kind)
-    title_key = "admin_apptpl_cfg_title" if kind == "approve" else "admin_rejtpl_cfg_title"
-    empty_key = "admin_apptpl_cfg_empty" if kind == "approve" else "admin_rejtpl_cfg_empty"
+    title_key = {
+        "approve": "admin_apptpl_cfg_title",
+        "reject": "admin_rejtpl_cfg_title",
+        "update_approve": "admin_update_apptpl_cfg_title",
+        "update_reject": "admin_update_rejtpl_cfg_title",
+    }[kind]
+    empty_key = {
+        "approve": "admin_apptpl_cfg_empty",
+        "reject": "admin_rejtpl_cfg_empty",
+        "update_approve": "admin_update_apptpl_cfg_empty",
+        "update_reject": "admin_update_rejtpl_cfg_empty",
+    }[kind]
     if templates:
         text = t(title_key, lang, templates=_rejtpl_list_text(templates))
     else:
@@ -6436,7 +6753,7 @@ async def _render_rejtpl_cfg(target, state: FSMContext, kind: str = "reject") ->
     await answer(target, text, admin_reject_templates_cfg_kb(templates, kind=kind, lang=lang), "admin")
 
 
-@router.callback_query(F.data.regexp(r"^adm:rejtpl_cfg(?::(?:reject|approve))?$"))
+@router.callback_query(F.data.regexp(r"^adm:rejtpl_cfg(?::(?:reject|approve|update_reject|update_approve))?$"))
 async def on_admin_rejtpl_cfg(cb: CallbackQuery, state: FSMContext) -> None:
     if not _ensure_admin_role(cb, "super"):
         await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
@@ -6450,7 +6767,7 @@ async def on_admin_rejtpl_cfg(cb: CallbackQuery, state: FSMContext) -> None:
     await ack(cb)
 
 
-@router.callback_query(F.data.regexp(r"^adm:rejtpl_add(?::(?:reject|approve))?$"))
+@router.callback_query(F.data.regexp(r"^adm:rejtpl_add(?::(?:reject|approve|update_reject|update_approve))?$"))
 async def on_admin_rejtpl_add(cb: CallbackQuery, state: FSMContext) -> None:
     if not _ensure_admin_role(cb, "super"):
         await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
@@ -6462,7 +6779,13 @@ async def on_admin_rejtpl_add(cb: CallbackQuery, state: FSMContext) -> None:
         await cb.answer(_tr(cb, "admin_rejtpl_limit", limit=_REJECT_TEMPLATES_LIMIT), show_alert=True)
         return
     await state.set_state(AdminFlow.entering_reject_template)
-    await answer(cb, _tr(cb, "admin_enter_reject_template"), admin_cancel_kb(_lang_for(cb)), "admin")
+    prompt_key = {
+        "approve": "admin_enter_approve_template",
+        "reject": "admin_enter_reject_template",
+        "update_approve": "admin_enter_update_approve_template",
+        "update_reject": "admin_enter_update_reject_template",
+    }[kind]
+    await answer(cb, _tr(cb, prompt_key), admin_cancel_kb(_lang_for(cb)), "admin")
     await ack(cb)
 
 
@@ -6485,7 +6808,7 @@ async def on_admin_enter_reject_template(message: Message, state: FSMContext) ->
     await _render_rejtpl_cfg(message, state, kind)
 
 
-@router.callback_query(F.data.regexp(r"^adm:rejtpl_del:(?:reject|approve):\d+$"))
+@router.callback_query(F.data.regexp(r"^adm:rejtpl_del:(?:reject|approve|update_reject|update_approve):\d+$"))
 async def on_admin_rejtpl_del(cb: CallbackQuery, state: FSMContext) -> None:
     if not _ensure_admin_role(cb, "super"):
         await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
@@ -6512,7 +6835,8 @@ async def on_admin_rejtpl_pick(cb: CallbackQuery, state: FSMContext) -> None:
     if entry and not _ensure_request_role(cb, entry):
         await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
         return
-    templates = _load_templates("reject")
+    kind = "update_reject" if entry and entry.get("type") == "update" else "reject"
+    templates = _load_templates(kind)
     if not templates:
         await cb.answer(_tr(cb, "admin_rejtpl_empty"), show_alert=True)
         return
@@ -6530,7 +6854,9 @@ async def on_admin_rejtpl_toggle(cb: CallbackQuery, state: FSMContext) -> None:
         return
     parts = cb.data.split(":")
     request_id, idx = parts[2], int(parts[3])
-    templates = _load_templates("reject")
+    entry = get_request_by_id(request_id)
+    kind = "update_reject" if entry and entry.get("type") == "update" else "reject"
+    templates = _load_templates(kind)
     if idx >= len(templates):
         await cb.answer()
         return
@@ -6563,7 +6889,8 @@ async def on_admin_rejtpl_go(cb: CallbackQuery, state: FSMContext) -> None:
     if not _ensure_request_role(cb, entry):
         await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
         return
-    templates = _load_templates("reject")
+    kind = "update_reject" if entry.get("type") == "update" else "reject"
+    templates = _load_templates(kind)
     data = await state.get_data()
     selected = [i for i in (data.get("reject_tpl_sel") or []) if isinstance(i, int) and 0 <= i < len(templates)]
     if not selected:

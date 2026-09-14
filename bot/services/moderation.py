@@ -10,9 +10,9 @@ from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile
 
 from bot.cache import get_admins, get_config
-from bot.formatting import code_html, quote_html, split_html, strip_blockquote_tags, telegram_html
+from bot.formatting import code_html, quote_html, split_html, strip_blockquote_tags, telegram_html, user_mention
 from bot.helpers import blank_and_delete, link_preview_options
-from bot.keyboards import moderation_appeal_kb, moderation_vote_kb
+from bot.keyboards import moderation_appeal_kb, moderation_delete_kb, moderation_vote_kb
 from bot import limits
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 def _forum_reply_markup(entry: dict | None, request_id: str, yes: int, no: int):
     if isinstance(entry, dict) and entry.get("type") == "unban_appeal":
         return moderation_appeal_kb(request_id, yes, no)
+    if isinstance(entry, dict) and entry.get("type") == "delete":
+        return moderation_delete_kb(request_id)
     return moderation_vote_kb(request_id, yes, no)
 from request_store import get_request_by_id, update_request_payload
 
@@ -29,7 +31,11 @@ VOTABLE_REQUEST_STATUSES = frozenset({"pending", "error", "scheduled"})
 
 
 def can_accept_vote(entry: dict | None) -> bool:
-    return bool(isinstance(entry, dict) and entry.get("status") in VOTABLE_REQUEST_STATUSES)
+    return bool(
+        isinstance(entry, dict)
+        and entry.get("type") != "delete"
+        and entry.get("status") in VOTABLE_REQUEST_STATUSES
+    )
 
 def moderation_config() -> dict[str, int]:
     cfg = get_config()
@@ -89,7 +95,16 @@ def rejection_reasons(entry: dict | None) -> list[str]:
             continue
         reason = str(item.get("reason") or "").strip()
         if reason:
-            out.append(strip_blockquote_tags(telegram_html(reason)))
+            if item.get("anonymous"):
+                author = "Аноним"
+            else:
+                try:
+                    author = user_mention(int(item.get("user_id") or 0), str(item.get("username") or ""))
+                except (TypeError, ValueError):
+                    author = ""
+                if not author:
+                    author = telegram_html(str(item.get("name") or "Модератор"))
+            out.append(f"{author} — {strip_blockquote_tags(telegram_html(reason))}")
     return out
 
 
@@ -188,6 +203,8 @@ def forum_text_with_votes(entry: dict | None) -> str:
         ))
     if isinstance(payload, dict) and payload.get("resubmitted_after_rework"):
         parts.append("♻️ <b>Отправлено после доработки</b> (плагин уже был на модерации)")
+    if isinstance(entry, dict) and entry.get("type") == "delete":
+        return "\n\n".join(parts)
     parts.append(vote_summary(entry))
     prev = previous_rounds_text(entry)
     if prev:
@@ -258,7 +275,12 @@ def set_vote(
         "anonymous": bool(current.get("anonymous")) if anonymous is None else bool(anonymous),
         "voted_at": datetime.now(timezone.utc).isoformat(),
     }
-    return update_request_payload(request_id, {"moderation_votes": votes})
+    updated = update_request_payload(request_id, {"moderation_votes": votes})
+    if updated:
+        from bot.services.moderation_stats import record_vote
+
+        record_vote(updated, votes[str(user_id)])
+    return updated
 
 
 def send_reasons_to_author_default() -> bool:
@@ -360,7 +382,8 @@ def _forum_image_key(entry: dict | None) -> str:
 
 
 async def send_media_group(bot, chat_id: int, media: list, *, topic_id: int | None = None,
-                           reply_to: int | None = None, caption: str | None = None) -> list:
+                           reply_to: int | None = None, caption: str | None = None,
+                           raise_errors: bool = False) -> list:
     from aiogram.types import InputMediaPhoto, InputMediaVideo
 
     items = [m for m in (media or []) if isinstance(m, dict) and m.get("file_id")][: limits.ALBUM_ITEMS]
@@ -381,10 +404,21 @@ async def send_media_group(bot, chat_id: int, media: list, *, topic_id: int | No
         kw["reply_to_message_id"] = reply_to
         kw["allow_sending_without_reply"] = True
     try:
+        if len(items) == 1:
+            item = items[0]
+            send = bot.send_video if item.get("type") == "video" else bot.send_photo
+            single_kw = dict(kw)
+            if caption:
+                single_kw["caption"] = caption[: limits.CAPTION]
+                single_kw["parse_mode"] = ParseMode.HTML
+            sent = await send(chat_id, item["file_id"], **single_kw)
+            return [int(sent.message_id)]
         sent = await bot.send_media_group(chat_id, group, **kw)
         return [int(m.message_id) for m in sent]
     except Exception:
         logger.exception("send_media_group failed chat_id=%s count=%s", chat_id, len(group))
+        if raise_errors:
+            raise
         return []
 
 

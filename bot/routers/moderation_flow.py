@@ -33,19 +33,22 @@ from bot.services.admin_notifications import (
 )
 from bot.states import UserFlow
 from bot.texts import t
-from request_store import get_request_by_callback_token, get_request_by_id
+from request_store import get_all_requests, get_request_by_callback_token, get_request_by_id
 
 router = Router(name="moderation-flow")
 logger = logging.getLogger(__name__)
 
 VOTE_PROMPT_TTL = 60
 _prompt_timers: dict[str, asyncio.Task] = {}
+_prompt_worker: asyncio.Task | None = None
 
 
-def _vote_templates(vote: str | None) -> list[str]:
+def _vote_templates(vote: str | None, request_id: str | None = None) -> list[str]:
     from bot.routers.admin_flow import _load_templates
 
-    return _load_templates("approve" if str(vote) == "yes" else "reject")
+    entry = get_request_by_id(request_id) if request_id else None
+    prefix = "update_" if isinstance(entry, dict) and entry.get("type") == "update" else ""
+    return _load_templates(f"{prefix}{'approve' if str(vote) == 'yes' else 'reject'}")
 
 
 async def _refresh_inline_vote_message(bot, inline_message_id: str | None, entry: dict | None, request_id: str) -> None:
@@ -78,16 +81,16 @@ def _timer_key(request_id: str, user_id: int) -> str:
     return f"{request_id}:{user_id}"
 
 
-def _pending_vote_is_active(item: dict | None, now: datetime | None = None) -> bool:
+def _pending_vote_remaining(item: dict | None, now: datetime | None = None) -> float:
     if not isinstance(item, dict):
-        return False
+        return 0.0
     raw_started_at = item.get("started_at")
     if not raw_started_at:
-        return False
+        return 0.0
     try:
         started_at = datetime.fromisoformat(str(raw_started_at).replace("Z", "+00:00"))
     except ValueError:
-        return False
+        return 0.0
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=timezone.utc)
     else:
@@ -96,7 +99,11 @@ def _pending_vote_is_active(item: dict | None, now: datetime | None = None) -> b
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     age = (current.astimezone(timezone.utc) - started_at).total_seconds()
-    return -5 <= age <= VOTE_PROMPT_TTL
+    return max(0.0, float(VOTE_PROMPT_TTL) - max(0.0, age))
+
+
+def _pending_vote_is_active(item: dict | None, now: datetime | None = None) -> bool:
+    return _pending_vote_remaining(item, now) > 0
 
 
 async def _leave_vote_reason_state(state: FSMContext) -> None:
@@ -114,12 +121,16 @@ def _cancel_prompt_timer(request_id: str, user_id: int) -> None:
 
 def _schedule_prompt_expiry(bot, request_id: str, user_id: int) -> None:
     _cancel_prompt_timer(request_id, user_id)
+    item = get_pending_vote(request_id, user_id)
+    remaining = _pending_vote_remaining(item)
+    if remaining <= 0:
+        return
 
     async def _expire() -> None:
         try:
-            await asyncio.sleep(VOTE_PROMPT_TTL)
+            await asyncio.sleep(remaining)
             item = get_pending_vote(request_id, int(user_id))
-            if not item:
+            if not item or _pending_vote_is_active(item):
                 return
             await _delete_prompt(bot, item)
             clear_pending_vote(request_id, int(user_id))
@@ -133,6 +144,61 @@ def _schedule_prompt_expiry(bot, request_id: str, user_id: int) -> None:
     try:
         _prompt_timers[_timer_key(request_id, user_id)] = asyncio.create_task(_expire())
     except RuntimeError:
+        pass
+
+
+async def expire_pending_vote_prompts(bot) -> int:
+    expired = 0
+    for entry in get_all_requests():
+        payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+        pending = payload.get("moderation_pending_votes") if isinstance(payload, dict) else None
+        if not isinstance(pending, dict):
+            continue
+        request_id = str(entry.get("id") or "")
+        if not request_id:
+            continue
+        for raw_user_id, item in list(pending.items()):
+            try:
+                user_id = int(raw_user_id)
+            except (TypeError, ValueError):
+                continue
+            if _pending_vote_is_active(item):
+                continue
+            _cancel_prompt_timer(request_id, user_id)
+            await _delete_prompt(bot, item)
+            clear_pending_vote(request_id, user_id)
+            expired += 1
+    return expired
+
+
+async def _prompt_cleanup_worker(bot) -> None:
+    while True:
+        try:
+            await expire_pending_vote_prompts(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("event=vote_prompt.cleanup_failed")
+        await asyncio.sleep(5)
+
+
+def start_vote_prompt_worker(bot) -> None:
+    global _prompt_worker
+    if _prompt_worker and not _prompt_worker.done():
+        return
+    _prompt_worker = asyncio.create_task(_prompt_cleanup_worker(bot))
+
+
+async def stop_vote_prompt_worker() -> None:
+    global _prompt_worker
+    task = _prompt_worker
+    _prompt_worker = None
+    if not task:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
         pass
 
 
@@ -158,7 +224,6 @@ async def start_vote_prompt(
     *,
     message_thread_id: int | None = None,
 ) -> bool:
-    """Start the shared forum/inline vote flow and send its reason prompt."""
     previous = get_pending_vote(request_id, user_id)
     if previous:
         await _delete_prompt(bot, previous)
@@ -180,7 +245,7 @@ async def start_vote_prompt(
                 request_id,
                 user_id,
                 anonymous=bool(stored_pending.get("anonymous")),
-                has_templates=bool(_vote_templates(vote)),
+                has_templates=bool(_vote_templates(vote, request_id)),
                 allow_no_reason=not require_vote_reason(),
                 lang=lang,
             ),
@@ -377,18 +442,19 @@ async def on_vote_reason_action(cb: CallbackQuery, state: FSMContext) -> None:
                 request_id,
                 owner_id,
                 anonymous=new_value,
-                has_templates=bool(_vote_templates(item.get("vote"))),
+                has_templates=bool(_vote_templates(item.get("vote"), request_id)),
                 allow_no_reason=not require_vote_reason(),
                 lang=lang,
             ))
         except Exception:
             pass
+        _schedule_prompt_expiry(cb.bot, request_id, int(user.id))
         await cb.answer(t("vote_anon_on_alert" if new_value else "vote_anon_off_alert", lang))
         return
 
     if action == "tpl":
         await _leave_vote_reason_state(state)
-        templates = _vote_templates(item.get("vote"))
+        templates = _vote_templates(item.get("vote"), request_id)
         if not templates:
             await cb.answer(t("admin_rejtpl_empty", lang), show_alert=True)
             return
@@ -400,6 +466,7 @@ async def on_vote_reason_action(cb: CallbackQuery, state: FSMContext) -> None:
             )
         except Exception:
             pass
+        _schedule_prompt_expiry(cb.bot, request_id, int(user.id))
         await cb.answer()
         return
 
@@ -415,18 +482,19 @@ async def on_vote_reason_action(cb: CallbackQuery, state: FSMContext) -> None:
                     request_id,
                     owner_id,
                     anonymous=bool(item.get("anonymous")),
-                    has_templates=bool(_vote_templates(item.get("vote"))),
+                    has_templates=bool(_vote_templates(item.get("vote"), request_id)),
                     allow_no_reason=not require_vote_reason(),
                     lang=lang,
                 ),
             )
         except Exception:
             pass
+        _schedule_prompt_expiry(cb.bot, request_id, int(user.id))
         await cb.answer()
         return
 
     if action == "t":
-        templates = _vote_templates(item.get("vote"))
+        templates = _vote_templates(item.get("vote"), request_id)
         try:
             idx = int(tpl_idx_raw)
         except ValueError:
@@ -464,7 +532,7 @@ async def on_vote_reason_action(cb: CallbackQuery, state: FSMContext) -> None:
                     request_id,
                     owner_id,
                     anonymous=bool(item.get("anonymous")),
-                    has_templates=bool(_vote_templates(item.get("vote"))),
+                    has_templates=bool(_vote_templates(item.get("vote"), request_id)),
                     allow_no_reason=not require_vote_reason(),
                     lang=lang,
                 ),
@@ -477,6 +545,7 @@ async def on_vote_reason_action(cb: CallbackQuery, state: FSMContext) -> None:
             moderation_vote_inline_message_id=cb.inline_message_id or "",
             moderation_vote_prompt_message_id=cb.message.message_id if cb.message else 0,
         )
+        _schedule_prompt_expiry(cb.bot, request_id, int(user.id))
         await cb.answer(t("vote_reason_enter_own", lang), show_alert=True)
         return
 

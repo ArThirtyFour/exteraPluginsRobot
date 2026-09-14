@@ -58,7 +58,6 @@ def decode_slug(value: str) -> str:
         return value
 
     slugs = _stored_slugs()
-    # A real slug which happens to look like a token must not be shadowed.
     if value in slugs:
         return value
 

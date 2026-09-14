@@ -113,9 +113,6 @@ def _ensure_all_request_route_tokens() -> List[Dict[str, Any]]:
         if isinstance(entry, dict) and str(entry.get("id") or "").strip()
     }
 
-    # A valid duplicate token keeps the newest owner, matching the reverse
-    # lookup behavior used before the index existed. Earlier duplicates are
-    # assigned fresh tokens below.
     last_valid_owner: Dict[str, Dict[str, Any]] = {}
     for entry in requests:
         if not isinstance(entry, dict):
@@ -295,8 +292,6 @@ def get_request_by_plugin_id(
     target = str(plugin_id or "").strip()
     if not target:
         return None
-    # Requests are appended to storage. Prefer the newest matching request so
-    # an old published/rejected submission does not hide a pending update.
     for entry in reversed(_get_requests_list()):
         if statuses is not None and entry.get("status") not in statuses:
             continue
@@ -306,7 +301,6 @@ def get_request_by_plugin_id(
 
 
 def request_deeplink_token(request_id: str) -> str:
-    """Return the persisted, Bot API-safe routing token for a request."""
     value = str(request_id or "").strip()
     _ensure_all_request_route_tokens()
     entry = get_request_by_id(value) or _route_token_index.get(value)
@@ -316,7 +310,6 @@ def request_deeplink_token(request_id: str) -> str:
 
 
 def get_request_by_deeplink_token(token: str) -> Optional[Dict[str, Any]]:
-    """Resolve persisted tokens first, then direct IDs from legacy links."""
     value = str(token or "").strip()
     if not value:
         return None
@@ -324,12 +317,10 @@ def get_request_by_deeplink_token(token: str) -> Optional[Dict[str, Any]]:
 
 
 def request_callback_token(request_id: str) -> str:
-    """Return the same compact persisted token used by request callbacks."""
     return request_deeplink_token(request_id)
 
 
 def get_request_by_callback_token(token: str) -> Optional[Dict[str, Any]]:
-    """Resolve persisted tokens first, then direct IDs from legacy callbacks."""
     value = str(token or "").strip()
     if not value:
         return None
@@ -403,6 +394,13 @@ def update_request_status(
     })
     
     _save_requests_list()
+    if status in DECISION_STATUSES and (actor or actor_id):
+        try:
+            from bot.services.moderation_stats import record_decision
+
+            record_decision(entry, status, actor, actor_id, history[-1]["changed_at"])
+        except Exception:
+            logger.exception("Failed to record moderation decision request_id=%s", request_id)
     return True
 
 
@@ -681,12 +679,12 @@ async def _scheduled_publish_loop(bot) -> None:
                 logger.info("Publishing scheduled request %s", request_id)
 
                 if payload.get("submission_type") == "icon" or payload.get("icon"):
-                    result = await publish_icon(entry)
+                    result = await publish_icon(entry, actor="scheduler")
                     notify_key = "notify_icon_published"
                     name = (payload.get("icon") or {}).get("name", "")
                     version = (payload.get("icon") or {}).get("version")
                 else:
-                    result = await publish_plugin(entry, bot)
+                    result = await publish_plugin(entry, bot, actor="scheduler")
                     notify_key = "notify_published"
                     name = (payload.get("plugin") or {}).get("name", "")
                     version = (payload.get("plugin") or {}).get("version")

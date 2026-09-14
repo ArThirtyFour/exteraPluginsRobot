@@ -563,8 +563,6 @@ async def _send_via_premium_userbot(bot, chat_id: int, content: Dict[str, Any], 
     kb = _build_keyboard(content.get("buttons") or [])
     visible = visible_length(text)
 
-    # Albums are delivered atomically by send_content. Editing only their first
-    # item through the userbot would lose the remaining message ids.
     if len(media) > 1:
         return None
 
