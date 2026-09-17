@@ -128,6 +128,7 @@ from request_store import (
     delete_request_and_file,
     delete_requests_by_plugin_id,
     get_request_by_id,
+    get_request_by_callback_token,
     get_all_requests,
     get_requests,
     update_request_payload,
@@ -5271,6 +5272,7 @@ async def on_admin_back_review(cb: CallbackQuery, state: FSMContext) -> None:
             lang=lang,
             allow_publish=_is_super_admin(cb),
             allow_vote=False,
+            media_count=len(_comment_media_of_entry(entry)),
         )
     else:
         kb = admin_review_kb(request_id, user_id, lang=lang, allow_publish=_is_super_admin(cb),
@@ -7577,7 +7579,8 @@ async def on_admin_show_media(cb: CallbackQuery, state: FSMContext) -> None:
     if not _ensure_admin(cb):
         await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
         return
-    entry = get_request_by_id(cb.data.split(":", 2)[2])
+    token = cb.data.split(":", 2)[2]
+    entry = get_request_by_callback_token(token) or get_request_by_id(token)
     media = _comment_media_of_entry(entry) if entry else []
     if not media:
         await cb.answer(_tr(cb, "admin_media_empty"), show_alert=True)

@@ -157,6 +157,15 @@ def is_unreachable_chat(exc: BaseException) -> bool:
     return any(marker in text for marker in _UNREACHABLE_MARKERS)
 
 
+def _comment_media_count(entry: dict[str, Any] | None) -> int:
+    if not isinstance(entry, dict):
+        return 0
+    payload = entry.get("payload", {}) if isinstance(entry.get("payload"), dict) else {}
+    if not isinstance(payload, dict):
+        return 0
+    return len([m for m in (payload.get("comment_media") or []) if isinstance(m, dict) and m.get("file_id")])
+
+
 async def send_review_notification(bot, chat_id: int, entry: dict[str, Any], text: str, file_path: str | None) -> None:
     request_id = str(entry.get("id") or "")
     payload = entry.get("payload", {}) if isinstance(entry.get("payload"), dict) else {}
@@ -164,6 +173,7 @@ async def send_review_notification(bot, chat_id: int, entry: dict[str, Any], tex
     sent_message_ids: list[int] = []
     request_type = str(entry.get("type") or "new")
     can_delete = request_type == "delete" and int(chat_id) in get_admins_super()
+    media_count = _comment_media_count(entry)
     try:
         msg = await bot.send_message(
             chat_id,
@@ -176,6 +186,7 @@ async def send_review_notification(bot, chat_id: int, entry: dict[str, Any], tex
                 submit_callback=f"adm:delete:{request_id}" if request_type == "delete" else None,
                 allow_publish=can_delete,
                 allow_vote=request_type != "delete",
+                media_count=media_count,
             ),
             disable_web_page_preview=True,
         )
@@ -256,6 +267,7 @@ async def refresh_admin_notify_messages(bot, entry: dict) -> None:
     user_id = int(payload.get("user_id") or 0)
     text = forum_text_with_votes(entry)
     request_type = str(entry.get("type") or "new")
+    media_count = _comment_media_count(entry)
 
     for chat_id_str, info in mapping.items():
         if not isinstance(info, dict):
@@ -280,6 +292,7 @@ async def refresh_admin_notify_messages(bot, entry: dict) -> None:
                     submit_callback=f"adm:delete:{request_id}" if request_type == "delete" else None,
                     allow_publish=request_type == "delete" and chat_id in get_admins_super(),
                     allow_vote=request_type != "delete",
+                    media_count=media_count,
                 ),
                 disable_web_page_preview=True,
             )
@@ -295,6 +308,7 @@ async def refresh_admin_notify_messages(bot, entry: dict) -> None:
                         submit_callback=f"adm:delete:{request_id}" if request_type == "delete" else None,
                         allow_publish=request_type == "delete" and chat_id in get_admins_super(),
                         allow_vote=request_type != "delete",
+                        media_count=media_count,
                     ),
                 )
             except Exception:
@@ -422,6 +436,7 @@ async def notify_superadmins_if_threshold(bot, entry: dict) -> None:
                     submit_callback=f"adm:delete:{request_id}" if entry.get("type") == "delete" else None,
                     lang=get_lang(admin_id),
                     allow_vote=entry.get("type") != "delete",
+                    media_count=_comment_media_count(entry),
                 )
             )
             await bot.send_message(
