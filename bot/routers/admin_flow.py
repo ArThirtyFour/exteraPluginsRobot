@@ -127,6 +127,7 @@ from request_store import (
     cleanup_hidden_requests,
     delete_request_and_file,
     delete_requests_by_plugin_id,
+    get_request_by_callback_token,
     get_request_by_id,
     get_request_by_callback_token,
     get_all_requests,
@@ -6136,9 +6137,14 @@ async def on_admin_publish(cb: CallbackQuery, state: FSMContext) -> None:
             _comment_media_of_entry(entry) or request_type == "update"
         ):
             from bot.helpers import spawn_background
-            from bot.services.example_media import publish_example_media
+            from bot.services.example_media import EXAMPLE_MEDIA_DELAY_SECONDS, schedule_example_media
 
-            spawn_background(publish_example_media(cb.bot, request_id))
+            update_request_payload(request_id, {
+                "example_media_not_before": (
+                    datetime.now(timezone.utc) + timedelta(seconds=EXAMPLE_MEDIA_DELAY_SECONDS)
+                ).isoformat(),
+            })
+            spawn_background(schedule_example_media(cb.bot, request_id))
 
         try:
             await finalize_admin_notify_messages(

@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 _worker_task: asyncio.Task | None = None
 _active: set[str] = set()
 _interval = 60
+EXAMPLE_MEDIA_DELAY_SECONDS = 5
 
 
 async def _get_userbot():
@@ -62,6 +63,16 @@ def eligible(entry: dict[str, Any]) -> bool:
         and payload.get("example_changelog_pending")
         and str(payload.get("changelog") or "").strip()
     )
+    not_before = str(payload.get("example_media_not_before") or "")
+    if not_before:
+        try:
+            scheduled_at = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
+            if scheduled_at.tzinfo is None:
+                scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+            if scheduled_at > datetime.now(timezone.utc):
+                return False
+        except ValueError:
+            pass
     return bool(
         entry.get("status") == "published"
         and entry.get("type") in {"new", "update"}
@@ -162,6 +173,7 @@ async def publish_example_media(bot, request_id: str) -> str:
             "example_changelog_pending": False,
             "example_media_published_at": datetime.now(timezone.utc).isoformat(),
             "example_media_error": "",
+            "example_media_not_before": "",
         })
         return "published"
     finally:
@@ -180,6 +192,11 @@ async def process_pending_example_media(bot, limit: int = 20) -> dict[str, int]:
             break
         await asyncio.sleep(1)
     return counts
+
+
+async def schedule_example_media(bot, request_id: str, delay: int = EXAMPLE_MEDIA_DELAY_SECONDS) -> str:
+    await asyncio.sleep(max(0, int(delay)))
+    return await publish_example_media(bot, request_id)
 
 
 async def _worker(bot) -> None:
