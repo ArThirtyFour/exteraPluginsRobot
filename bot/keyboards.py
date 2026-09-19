@@ -927,6 +927,20 @@ def admin_broadcast_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     ])
 
 
+def admin_broadcast_kind_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn(t("admin_broadcast_all", lang), callback_data="adm:broadcast:all", icon="broadcast")],
+        [_btn(t("admin_broadcast_moderation", lang), callback_data="adm:broadcast:moderation", icon="admin")],
+        [_btn(t("btn_back", lang), callback_data="adm:cancel", style="danger", icon="back")],
+    ])
+
+
+def admin_broadcast_progress_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_btn(t("btn_refresh", lang), callback_data="adm:broadcast:progress", icon="updates")],
+    ])
+
+
 def admin_post_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [_btn(t("btn_send", lang), callback_data="adm:post:send", style="success", icon="send")],

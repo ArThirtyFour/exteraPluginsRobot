@@ -28,7 +28,7 @@ from bot.constants import PAGE_SIZE
 from bot.context import get_lang
 from bot.callback_tokens import decode_slug, encode_slug
 from bot.formatting import plain_html, strip_blockquote_tags, telegram_html, user_mention
-from bot.helpers import ack, answer
+from bot.helpers import ack, answer, spawn_background
 from bot.menu_owner import MenuOwnerMiddleware, remember_menu_owner
 from bot.services.audit import add_audit_event, audit_events_page, recent_audit_events
 from bot.keyboards import (
@@ -38,6 +38,8 @@ from bot.keyboards import (
     admin_actions_kb,
     admin_banned_kb,
     admin_broadcast_confirm_kb,
+    admin_broadcast_kind_kb,
+    admin_broadcast_progress_kb,
     admin_post_confirm_kb,
     admin_config_kb,
     admin_config_admins_kb,
@@ -129,7 +131,6 @@ from request_store import (
     delete_requests_by_plugin_id,
     get_request_by_callback_token,
     get_request_by_id,
-    get_request_by_callback_token,
     get_all_requests,
     get_requests,
     update_request_payload,
@@ -1141,9 +1142,63 @@ async def _render_broadcast_enter(cb: CallbackQuery, state: FSMContext) -> None:
     lang = _lang_for(cb)
     await state.set_state(AdminFlow.entering_broadcast)
     await state.update_data(broadcast_message_id=cb.message.message_id if cb.message else None)
-    msg = await answer(cb, _tr(cb, "admin_prompt_broadcast"), admin_cancel_kb(lang), "admin")
+    data = await state.get_data()
+    prompt = "admin_broadcast_prompt_moderation" if data.get("broadcast_kind") == "moderation" else "admin_prompt_broadcast"
+    msg = await answer(cb, _tr(cb, prompt), admin_cancel_kb(lang), "admin")
     if msg:
         await state.update_data(broadcast_message_id=msg.message_id)
+
+
+async def _render_broadcast_kind(cb: CallbackQuery, state: FSMContext) -> None:
+    lang = _lang_for(cb)
+    await state.set_state(AdminFlow.menu)
+    await answer(cb, _tr(cb, "admin_broadcast_choose"), admin_broadcast_kind_kb(lang), "admin")
+
+
+def _broadcast_kind_label(kind: str, lang: str) -> str:
+    return t("admin_broadcast_moderation" if kind == "moderation" else "admin_broadcast_all", lang)
+
+
+def _broadcast_progress_text(kind: str, total: int, current: int, sent: int, failed: int, lang: str) -> str:
+    return t(
+        "admin_broadcast_progress",
+        lang,
+        kind=_broadcast_kind_label(kind, lang),
+        total=total,
+        current=current,
+        sent=sent,
+        failed=failed,
+    )
+
+
+async def _run_broadcast_delivery(bot, chat_id: int, message_id: int, recipients: list[int], text: str, run, lang: str) -> None:
+    from bot.services.broadcast import deliver_broadcast
+
+    task = asyncio.create_task(deliver_broadcast(bot, recipients, text, run))
+    while not task.done():
+        try:
+            await bot.edit_message_text(
+                _broadcast_progress_text(run.kind, run.total, run.current, run.sent, run.failed, lang),
+                chat_id=chat_id,
+                message_id=message_id,
+                parse_mode=ParseMode.HTML,
+                reply_markup=admin_broadcast_progress_kb(lang),
+            )
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    await task
+    try:
+        await bot.edit_message_text(
+            t("admin_broadcast_done", lang, sent=run.sent, failed=run.failed),
+            chat_id=chat_id,
+            message_id=message_id,
+            parse_mode=ParseMode.HTML,
+            reply_markup=admin_menu_kb("super", lang=lang),
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        pass
 
 
 def _my_vote(entry: dict, user_id: int) -> str | None:
@@ -1349,7 +1404,7 @@ async def _render_nav_token(cb: CallbackQuery, state: FSMContext, token: str) ->
         else:
             await _render_config(cb, state)
     elif token == "adm:broadcast":
-        await _render_broadcast_enter(cb, state)
+        await _render_broadcast_kind(cb, state)
     elif token == "adm:post":
         await state.set_state(AdminFlow.menu)
         await answer(cb, _post_section_text(lang), admin_post_section_kb(lang=lang), "admin")
@@ -4298,6 +4353,17 @@ async def on_admin_broadcast(cb: CallbackQuery, state: FSMContext) -> None:
         return
 
     await _nav_push(state, "adm:broadcast")
+    await _render_broadcast_kind(cb, state)
+    await ack(cb)
+
+
+@router.callback_query(F.data.in_({"adm:broadcast:all", "adm:broadcast:moderation"}))
+async def on_admin_broadcast_kind(cb: CallbackQuery, state: FSMContext) -> None:
+    if not _ensure_admin_role(cb, "super"):
+        await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
+        return
+    kind = cb.data.rsplit(":", 1)[-1]
+    await state.update_data(broadcast_kind=kind)
     await _render_broadcast_enter(cb, state)
     await ack(cb)
 
@@ -4317,13 +4383,15 @@ async def on_admin_broadcast_message(message: Message, state: FSMContext) -> Non
         )
         return
 
+    data = await state.get_data()
+    kind = str(data.get("broadcast_kind") or "all")
     await state.update_data(broadcast_text=text)
     await state.set_state(AdminFlow.confirming_broadcast)
     broadcast_message_id = (await state.get_data()).get("broadcast_message_id")
     if broadcast_message_id:
         try:
             await message.bot.edit_message_text(
-                f"<b>{_tr(message, 'admin_btn_broadcast')}</b>\n\n{text}\n\n{_tr(message, 'admin_broadcast_confirm')}",
+                f"<b>{_tr(message, 'admin_btn_broadcast')}</b>\n\n{text}\n\n{_tr(message, 'admin_broadcast_confirm_moderation' if kind == 'moderation' else 'admin_broadcast_confirm')}",
                 chat_id=message.chat.id,
                 message_id=broadcast_message_id,
                 parse_mode=ParseMode.HTML,
@@ -4332,7 +4400,7 @@ async def on_admin_broadcast_message(message: Message, state: FSMContext) -> Non
             )
         except Exception:
             sent_msg = await message.answer(
-                f"<b>{_tr(message, 'admin_btn_broadcast')}</b>\n\n{text}\n\n{_tr(message, 'admin_broadcast_confirm')}",
+                f"<b>{_tr(message, 'admin_btn_broadcast')}</b>\n\n{text}\n\n{_tr(message, 'admin_broadcast_confirm_moderation' if kind == 'moderation' else 'admin_broadcast_confirm')}",
                 parse_mode=ParseMode.HTML,
                 reply_markup=admin_broadcast_confirm_kb(lang=lang),
                 disable_web_page_preview=True,
@@ -4341,7 +4409,7 @@ async def on_admin_broadcast_message(message: Message, state: FSMContext) -> Non
                 await state.update_data(broadcast_message_id=sent_msg.message_id)
     else:
         sent_msg = await message.answer(
-            f"<b>{_tr(message, 'admin_btn_broadcast')}</b>\n\n{text}\n\n{_tr(message, 'admin_broadcast_confirm')}",
+            f"<b>{_tr(message, 'admin_btn_broadcast')}</b>\n\n{text}\n\n{_tr(message, 'admin_broadcast_confirm_moderation' if kind == 'moderation' else 'admin_broadcast_confirm')}",
             parse_mode=ParseMode.HTML,
             reply_markup=admin_broadcast_confirm_kb(lang=lang),
             disable_web_page_preview=True,
@@ -4376,42 +4444,66 @@ async def on_admin_broadcast_confirm(cb: CallbackQuery, state: FSMContext) -> No
         await cb.answer(_tr(cb, "admin_broadcast_no_text"), show_alert=True)
         return
 
-    users = list_users()
-    sent = 0
-    failed = 0
-    for user in users:
-        user_id = user.get("user_id")
-        if not user_id or user.get("banned"):
-            continue
-        if not is_broadcast_enabled(int(user_id)):
-            continue
-        try:
-            await cb.bot.send_message(
-                user_id,
-                text,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-            sent += 1
-        except Exception:
-            failed += 1
+    kind = str(data.get("broadcast_kind") or "all")
+    if kind == "moderation":
+        recipients = sorted(get_admins())
+    else:
+        recipients = sorted({
+            int(user.get("user_id"))
+            for user in list_users()
+            if user.get("user_id") and not user.get("banned") and is_broadcast_enabled(int(user["user_id"]))
+        })
+    from bot.services.broadcast import claim_broadcast
 
+    run = await claim_broadcast(kind, len(recipients))
+    if not run:
+        await cb.answer(_tr(cb, "admin_broadcast_already_running"), show_alert=True)
+        return
     await state.clear()
     await state.set_state(AdminFlow.menu)
+    progress_chat_id = cb.message.chat.id if cb.message else 0
+    progress_message_id = cb.message.message_id if cb.message else 0
     try:
         await cb.message.edit_text(
-            _tr(cb, "admin_broadcast_done", sent=sent, failed=failed),
+            _broadcast_progress_text(kind, run.total, run.current, run.sent, run.failed, lang),
             parse_mode=ParseMode.HTML,
-            reply_markup=admin_menu_kb(_admin_menu_role(cb), lang=lang),
+            reply_markup=admin_broadcast_progress_kb(lang),
             disable_web_page_preview=True,
         )
     except Exception:
-        await answer(
+        sent_message = await answer(
             cb,
-            _tr(cb, "admin_broadcast_done", sent=sent, failed=failed),
-            admin_menu_kb(_admin_menu_role(cb), lang=lang),
-            "profile",
+            _broadcast_progress_text(kind, run.total, run.current, run.sent, run.failed, lang),
+            admin_broadcast_progress_kb(lang),
+            "admin",
         )
+        if sent_message:
+            progress_chat_id = sent_message.chat.id
+            progress_message_id = sent_message.message_id
+    if progress_chat_id and progress_message_id:
+        spawn_background(_run_broadcast_delivery(cb.bot, progress_chat_id, progress_message_id, recipients, text, run, lang))
+    await ack(cb)
+
+
+@router.callback_query(F.data == "adm:broadcast:progress")
+async def on_admin_broadcast_progress(cb: CallbackQuery, state: FSMContext) -> None:
+    if not _ensure_admin_role(cb, "super"):
+        await cb.answer(_tr(cb, "admin_denied"), show_alert=True)
+        return
+    from bot.services.broadcast import active_broadcast
+
+    run = active_broadcast()
+    if not run:
+        await cb.answer(_tr(cb, "admin_broadcast_cancelled"), show_alert=True)
+        return
+    try:
+        await cb.message.edit_text(
+            _broadcast_progress_text(run.kind, run.total, run.current, run.sent, run.failed, _lang_for(cb)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=admin_broadcast_progress_kb(_lang_for(cb)) if not run.finished else admin_menu_kb("super", lang=_lang_for(cb)),
+        )
+    except Exception:
+        pass
     await ack(cb)
 
 

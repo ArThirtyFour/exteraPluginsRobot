@@ -25,3 +25,6 @@ __pycache__/
 .windsurf
 .venv
 venv/
+/reports
+/tests
+*.zip

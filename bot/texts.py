@@ -418,6 +418,13 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "ru": "Отправить всем пользователям?",
         "en": "Send to all users?",
     },
+    "admin_broadcast_choose": {"ru": "<b>Рассылка</b>\n\nВыберите получателей:", "en": "<b>Broadcast</b>\n\nChoose recipients:"},
+    "admin_broadcast_all": {"ru": "Всем пользователям", "en": "All users"},
+    "admin_broadcast_moderation": {"ru": "Модерации", "en": "Moderation team"},
+    "admin_broadcast_prompt_moderation": {"ru": "Введите сообщение для модераторов и суперадминов:", "en": "Enter a message for moderators and superadmins:"},
+    "admin_broadcast_confirm_moderation": {"ru": "Отправить модераторам и суперадминам?", "en": "Send to moderators and superadmins?"},
+    "admin_broadcast_progress": {"ru": "<b>Рассылка</b>\n\nПолучатели: {kind}\nПрогресс: {current}/{total}\nОтправлено: {sent}\nОшибок: {failed}", "en": "<b>Broadcast</b>\n\nRecipients: {kind}\nProgress: {current}/{total}\nSent: {sent}\nFailed: {failed}"},
+    "admin_broadcast_already_running": {"ru": "Рассылка уже идёт. Откройте прогресс.", "en": "A broadcast is already running. Open its progress."},
     "admin_broadcast_cancelled": {
         "ru": "Отменено",
         "en": "Cancelled",
