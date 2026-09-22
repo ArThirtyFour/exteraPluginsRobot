@@ -90,6 +90,8 @@ router = Router(name="user-flow")
 router.callback_query.middleware(MenuOwnerMiddleware())
 logger = logging.getLogger(__name__)
 TZ_UTC_PLUS_5 = timezone(timedelta(hours=5))
+_START_COOLDOWN_SECONDS = 3.0
+_recent_starts: dict[int, float] = {}
 _COMMENT_MEDIA_GROUP_SETTLE_SECONDS = 0.8
 _comment_media_group_buffers: dict[tuple[int, int, str], dict[str, Any]] = {}
 _EDITABLE_REQUEST_STATUSES = {"pending", "rework"}
@@ -579,9 +581,21 @@ async def _notify_admins_request_updated(bot, entry: Dict[str, Any], note: str =
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    if user_id is not None:
+        now = asyncio.get_running_loop().time()
+        if len(_recent_starts) >= 10000:
+            cutoff = now - _START_COOLDOWN_SECONDS
+            for stale_user_id, started_at in list(_recent_starts.items()):
+                if started_at < cutoff:
+                    _recent_starts.pop(stale_user_id, None)
+        previous = _recent_starts.get(user_id, 0.0)
+        if now - previous < _START_COOLDOWN_SECONDS:
+            logger.info("event=start.duplicate_ignored user_id=%s", user_id)
+            return
+        _recent_starts[user_id] = now
     await state.clear()
     await remember_menu_owner(message, state)
-    user_id = message.from_user.id if message.from_user else None
 
     if user_id is not None:
         try:

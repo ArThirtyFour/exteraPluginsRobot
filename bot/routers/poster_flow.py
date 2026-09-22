@@ -719,6 +719,7 @@ async def on_toggle_rich(cb: CallbackQuery, state: FSMContext) -> None:
         skipped = poster.rich_unsupported_media({"media": data.get("poster_media") or []})
         if skipped:
             await cb.answer(t("poster_warn_rich_media", lang, types=", ".join(skipped)), show_alert=True)
+            return
 
     raw = data.get("poster_raw")
     updates = {"poster_rich": enabling, "from_preview": False}

@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from bot import limits
+from bot.formatting import telegram_html
 from bot.helpers import BLANK_CHAR
 
 from storage import load_poster, save_poster
@@ -417,6 +418,10 @@ def _build_media_group(media: List[Dict[str, Any]], caption: str | None):
 async def send_content(bot, chat_id: int, content: Dict[str, Any]):
     from aiogram.enums import ParseMode
 
+    if content.get("rich") and rich_unsupported_media(content):
+        content = dict(content)
+        content["rich"] = False
+        content["html_text"] = telegram_html(content.get("html_text") or "")
     text = normalize_custom_emoji(content.get("html_text") or "")
     media = [
         item

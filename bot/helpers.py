@@ -111,6 +111,11 @@ def _is_superseded_error(exc: Exception) -> bool:
     return "canceled by new" in text or "message can't be edited" in text
 
 
+def _is_message_missing_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "message to edit not found" in text or "message identifier is not specified" in text
+
+
 def _is_entities_error(exc: Exception) -> bool:
     if not isinstance(exc, TelegramBadRequest):
         return False
@@ -482,6 +487,40 @@ async def answer(
                     _short_error(exc),
                 )
                 return msg
+
+            if isinstance(exc, TelegramBadRequest) and _is_message_missing_error(exc):
+                logger.info(
+                    "event=answer.callback_message_replaced chat_id=%s message_id=%s",
+                    chat_id,
+                    getattr(msg, "message_id", None),
+                )
+                try:
+                    file_id = _image_file_ids.get(image or "")
+                    path = IMAGES_DIR / f"{image}.png" if image else None
+                    if image and file_id:
+                        return await bot.send_photo(
+                            chat_id, file_id, caption=text, parse_mode=ParseMode.HTML,
+                            reply_markup=kb, **thread_kwargs,
+                        )
+                    if path and path.exists():
+                        sent = await bot.send_photo(
+                            chat_id, FSInputFile(path), caption=text, parse_mode=ParseMode.HTML,
+                            reply_markup=kb, **thread_kwargs,
+                        )
+                        if sent.photo:
+                            _image_file_ids[image] = sent.photo[-1].file_id
+                        return sent
+                    return await bot.send_message(
+                        chat_id, text=text, parse_mode=ParseMode.HTML, reply_markup=kb,
+                        disable_web_page_preview=disable_web_page_preview,
+                        link_preview_options=preview_options, **thread_kwargs,
+                    )
+                except Exception as replacement_exc:
+                    logger.warning(
+                        "event=answer.callback_message_replace_failed chat_id=%s error=%s",
+                        chat_id, _short_error(replacement_exc),
+                    )
+                    return None
 
             logger.exception(
                 "event=answer.callback_edit_failed chat_id=%s message_id=%s image=%s has_photo=%s text_len=%s error=%s",

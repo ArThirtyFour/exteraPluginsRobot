@@ -274,8 +274,8 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "en": "Text is longer than {limit} characters — a rich message can't hold that.",
     },
     "poster_warn_rich_media": {
-        "ru": "Rich-сообщение не показывает вложения этих типов: {types}. Оно уйдёт без них — поддерживаются фото, видео, гиф и аудио.",
-        "en": "Rich messages can't display these attachments: {types}. They will be dropped — photo, video, GIF and audio are supported.",
+        "ru": "Rich-режим не поддерживает вложения этих типов: {types}. Уберите их или оставьте Rich-режим выключенным.",
+        "en": "Rich mode does not support these attachment types: {types}. Remove them or keep Rich mode disabled.",
     },
     "poster_err_bad_buttons": {"ru": "Не распознал кнопки. Формат: <code>Текст | https://ссылка</code>.", "en": "Couldn't parse buttons. Format: <code>Text | https://link</code>."},
     "poster_err_bad_time": {"ru": "Неверная дата. Формат: <code>ДД.ММ.ГГГГ ЧЧ:ММ</code>.", "en": "Invalid date. Format: <code>DD.MM.YYYY HH:MM</code>."},
