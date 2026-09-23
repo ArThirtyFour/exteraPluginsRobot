@@ -268,8 +268,6 @@ async def on_request_appeal_text(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("dlg:"))
 async def on_dialog_moderation_action(cb: CallbackQuery, state: FSMContext) -> None:
     from bot.cache import get_admins_super
-    from bot.services.moderation import is_moderation_forum_chat
-    from bot.services.validation import block_plugin
     from user_store import ban_user
 
     parts = (cb.data or "").split(":")
@@ -278,11 +276,7 @@ async def on_dialog_moderation_action(cb: CallbackQuery, state: FSMContext) -> N
         return
     action = parts[1]
     actor = cb.from_user
-    chat_id = cb.message.chat.id if cb.message and cb.message.chat else None
-    if not actor or (actor.id not in get_admins_super() and not is_moderation_forum_chat(chat_id)):
-        await cb.answer(t("admin_denied", "ru"), show_alert=True)
-        return
-    if actor.id not in get_admins_super():
+    if not actor or actor.id not in get_admins_super():
         await cb.answer(t("admin_denied", "ru"), show_alert=True)
         return
 
@@ -292,7 +286,6 @@ async def on_dialog_moderation_action(cb: CallbackQuery, state: FSMContext) -> N
         await cb.answer()
         return
     request_id = ":".join(parts[3:])
-    entry = get_request_by_id(request_id)
 
     if action == "ban":
         ban_user(author_id, reason="Нарушение в диалоге с модерацией")
@@ -302,30 +295,6 @@ async def on_dialog_moderation_action(cb: CallbackQuery, state: FSMContext) -> N
             request_id=request_id, details={"user_id": author_id},
         )
         await cb.answer(t("dialog_author_banned", "ru"), show_alert=True)
-    elif action == "rejapp":
-        plugin_id = ""
-        if isinstance(entry, dict):
-            payload = entry.get("payload", {}) if isinstance(entry.get("payload"), dict) else {}
-            item = payload.get("plugin") or payload.get("icon") or {}
-            plugin_id = str(item.get("id") or "").strip()
-            update_request_status(request_id, "rejected", comment="Апелляция отклонена модерацией")
-        if plugin_id:
-            block_plugin(plugin_id)
-        add_audit_event(
-            "moderation.appeal_denied",
-            actor_id=actor.id, actor=actor.username or actor.full_name or "",
-            request_id=request_id, details={"plugin_id": plugin_id},
-        )
-        try:
-            await cb.bot.send_message(
-                author_id,
-                t("notify_rejected_blocked", get_lang(author_id)).strip(),
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            logger.exception("event=dialog.notify_appeal_rejected_failed user_id=%s", author_id)
-        await cb.answer(t("dialog_appeal_rejected", "ru"), show_alert=True)
     else:
         await cb.answer()
         return

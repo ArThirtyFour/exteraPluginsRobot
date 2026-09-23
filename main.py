@@ -79,6 +79,9 @@ async def on_startup(bot: Bot) -> None:
     from storage import preload_storage
     await preload_storage()
 
+    from bot.services.moderation_stats import sync_moderation_history
+    await asyncio.to_thread(sync_moderation_history)
+
     from bot.services.publish import seed_updated_plugins
     seed_updated_plugins()
     

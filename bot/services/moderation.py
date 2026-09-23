@@ -248,41 +248,6 @@ def request_title(entry: dict | None) -> str:
     )
 
 
-def set_vote(
-    request_id: str,
-    user_id: int,
-    username: str,
-    name: str,
-    vote: VoteValue,
-    reason: str | None = None,
-    anonymous: bool | None = None,
-) -> dict | None:
-    entry = get_request_by_id(request_id)
-    if not entry:
-        return None
-    payload = entry.get("payload", {}) if isinstance(entry.get("payload"), dict) else {}
-    votes = payload.get("moderation_votes")
-    if not isinstance(votes, dict):
-        votes = {}
-    current = votes.get(str(user_id)) if isinstance(votes.get(str(user_id)), dict) else {}
-    votes[str(user_id)] = {
-        **current,
-        "user_id": int(user_id),
-        "username": username or current.get("username", ""),
-        "name": name or current.get("name", ""),
-        "vote": vote,
-        "reason": reason if reason is not None else current.get("reason", ""),
-        "anonymous": bool(current.get("anonymous")) if anonymous is None else bool(anonymous),
-        "voted_at": datetime.now(timezone.utc).isoformat(),
-    }
-    updated = update_request_payload(request_id, {"moderation_votes": votes})
-    if updated:
-        from bot.services.moderation_stats import record_vote
-
-        record_vote(updated, votes[str(user_id)])
-    return updated
-
-
 def send_reasons_to_author_default() -> bool:
     cfg = get_config()
     raw = (cfg.get("moderation") or {}) if isinstance(cfg, dict) else {}
@@ -357,20 +322,42 @@ def clear_pending_vote(request_id: str, user_id: int) -> dict | None:
 
 
 def commit_pending_vote(request_id: str, user_id: int, reason: str) -> dict | None:
-    item = get_pending_vote(request_id, user_id)
-    if not item:
+    entry = get_request_by_id(request_id)
+    if not entry:
         return None
-    entry = set_vote(
-        request_id,
-        int(user_id),
-        str(item.get("username") or ""),
-        str(item.get("name") or ""),
-        item.get("vote"),
-        reason=reason,
-        anonymous=bool(item.get("anonymous")),
-    )
-    clear_pending_vote(request_id, user_id)
-    return get_request_by_id(request_id) or entry
+    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+    pending_source = payload.get("moderation_pending_votes")
+    pending = dict(pending_source) if isinstance(pending_source, dict) else {}
+    user_key = str(int(user_id))
+    item = pending.pop(user_key, None)
+    if not isinstance(item, dict):
+        return None
+    votes_source = payload.get("moderation_votes")
+    votes = dict(votes_source) if isinstance(votes_source, dict) else {}
+    current = votes.get(user_key) if isinstance(votes.get(user_key), dict) else {}
+    vote_record = {
+        **current,
+        "user_id": int(user_id),
+        "username": str(item.get("username") or current.get("username") or ""),
+        "name": str(item.get("name") or current.get("name") or ""),
+        "vote": item.get("vote"),
+        "reason": reason,
+        "anonymous": bool(item.get("anonymous")),
+        "voted_at": datetime.now(timezone.utc).isoformat(),
+    }
+    votes[user_key] = vote_record
+    updated = update_request_payload(request_id, {
+        "moderation_votes": votes,
+        "moderation_pending_votes": pending,
+    })
+    if updated:
+        from bot.services.moderation_stats import record_vote
+
+        try:
+            record_vote(updated, vote_record)
+        except Exception:
+            logger.exception("Failed to record moderation vote request_id=%s user_id=%s", request_id, user_id)
+    return updated
 
 
 _FORUM_IMG_BY_TYPE = {"unban_appeal": "appeal", "update": "update", "delete": "delete"}

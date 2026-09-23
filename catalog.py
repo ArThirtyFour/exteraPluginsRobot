@@ -35,6 +35,7 @@ _published_plugins_cache: Optional[List[CatalogEntry]] = None
 _published_icons_cache: Optional[List[CatalogEntry]] = None
 _slug_index: Dict[str, CatalogEntry] = {}
 _icon_slug_index: Dict[str, CatalogEntry] = {}
+_official_plugin_id_index: set[str] = set()
 
 
 SOURCE_ALL = "all"
@@ -51,6 +52,7 @@ def invalidate_catalog_cache() -> None:
     _published_icons_cache = None
     _slug_index.clear()
     _icon_slug_index.clear()
+    _official_plugin_id_index.clear()
 
 
 def _load_plugins() -> List[CatalogEntry]:
@@ -62,10 +64,16 @@ def _load_plugins() -> List[CatalogEntry]:
     _plugins_cache = database.get("plugins", [])
     
     _slug_index.clear()
+    _official_plugin_id_index.clear()
     for plugin in _plugins_cache:
         slug = _normalize_slug(plugin.get("slug"))
         if slug:
             _slug_index[slug] = plugin
+        if plugin.get("status") == "published" and not is_external_plugin(plugin):
+            localized = plugin.get("ru") if isinstance(plugin.get("ru"), dict) else {}
+            plugin_id = str(localized.get("id") or plugin.get("slug") or "").strip().lower()
+            if plugin_id:
+                _official_plugin_id_index.add(plugin_id)
     
     return _plugins_cache
 
@@ -299,6 +307,14 @@ def find_plugin_by_slug(slug: Optional[str]) -> Optional[CatalogEntry]:
     return _slug_index.get(target)
 
 
+def has_official_plugin_id(plugin_id: Optional[str]) -> bool:
+    target = str(plugin_id or "").strip().lower()
+    if not target:
+        return False
+    _load_plugins()
+    return target in _official_plugin_id_index
+
+
 def find_icon_by_slug(slug: Optional[str]) -> Optional[CatalogEntry]:
     target = _normalize_slug(slug)
     if not target:
@@ -376,5 +392,4 @@ def find_user_icons(user_id: int, username: str = "") -> List[CatalogEntry]:
                     results.append(icon)
     
     return results
-
 

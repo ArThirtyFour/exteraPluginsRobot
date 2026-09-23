@@ -21,6 +21,15 @@ OPTIONAL_FIELDS = {
 }
 
 _VERSION_RE = re.compile(r"\d+(?:\.\d+)*")
+_DUNDER_FIELD_BY_NAME = {
+    dunder: key
+    for key, dunder in {**MANDATORY_FIELDS, **OPTIONAL_FIELDS}.items()
+}
+_DUNDER_RE = re.compile(
+    r"^[ \t]*(?P<name>__(?:id|name|author|version|description|min_version|app_version|icon|link)__)[ \t]*=[ \t]*(?P<value>.+)$",
+    re.MULTILINE,
+)
+_UI_SETTINGS_IMPORT_RE = re.compile(r"^from\s+ui\.settings\s+import", re.MULTILINE)
 
 
 def _version_only(value: Optional[str]) -> str:
@@ -70,12 +79,11 @@ def parse_plugin_file(path: Path | str, fallback_version: str | None = None) -> 
 
 def parse_plugin_text(text: str, fallback_version: str | None = None) -> PluginMetadata:
 
-    normalized = text.replace("\r\n", "\n")
-    fields: Dict[str, Optional[str]] = {}
-
-    for key, dunder in {**MANDATORY_FIELDS, **OPTIONAL_FIELDS}.items():
-        value = _extract_dunder_value(normalized, dunder)
-        fields[key] = value
+    fields: Dict[str, Optional[str]] = {key: None for key in _DUNDER_FIELD_BY_NAME.values()}
+    for match in _DUNDER_RE.finditer(text):
+        key = _DUNDER_FIELD_BY_NAME[match.group("name")]
+        if fields[key] is None:
+            fields[key] = _strip_literal(match.group("value").strip())
 
     missing = [name for name in MANDATORY_FIELDS if not fields.get(name)]
     if missing:
@@ -92,7 +100,7 @@ def parse_plugin_text(text: str, fallback_version: str | None = None) -> PluginM
             "не указана версия: нужен __min_version__ или __app_version__"
         )
 
-    has_ui_settings = _detect_ui_settings_import(normalized)
+    has_ui_settings = _detect_ui_settings_import(text)
 
     metadata = PluginMetadata(
         id=fields["id"],
@@ -108,19 +116,6 @@ def parse_plugin_text(text: str, fallback_version: str | None = None) -> PluginM
     )
 
     return metadata
-
-
-def _extract_dunder_value(text: str, dunder_name: str) -> Optional[str]:
-    pattern = re.compile(
-        rf"^\s*{re.escape(dunder_name)}\s*=\s*(?P<value>.+)$",
-        re.MULTILINE,
-    )
-    match = pattern.search(text)
-    if not match:
-        return None
-
-    raw_value = match.group("value").strip()
-    return _strip_literal(raw_value)
 
 
 def _strip_literal(raw_value: str) -> Optional[str]:
@@ -144,4 +139,4 @@ def _strip_literal(raw_value: str) -> Optional[str]:
 
 
 def _detect_ui_settings_import(text: str) -> bool:
-    return bool(re.search(r"^from\s+ui\.settings\s+import", text, re.MULTILINE))
+    return bool(_UI_SETTINGS_IMPORT_RE.search(text))

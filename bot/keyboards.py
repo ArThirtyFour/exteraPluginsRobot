@@ -1104,8 +1104,6 @@ def author_rejected_kb(request_id: str, can_appeal: bool = False, lang: str = "r
 
 def dialog_author_reply_kb(request_id: str, author_id: int, lang: str = "ru") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [_btn(t("kb_dialog_reject_appeal", lang), callback_data=f"dlg:rejapp:{author_id}:{request_callback_token(request_id)}",
-              icon="no", style="danger")],
         [_btn(t("kb_dialog_ban_author", lang), callback_data=f"dlg:ban:{author_id}:{request_callback_token(request_id)}",
               icon="ban", style="danger")],
     ])

@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -65,8 +66,8 @@ async def process_plugin_file(bot: Bot, document: Document) -> PluginData:
         raise ValueError("file_too_large")
 
     try:
-        meta = parse_plugin_file(temp_path)
-    except (FileNotFoundError, PluginParseError) as e:
+        meta = await asyncio.to_thread(parse_plugin_file, temp_path)
+    except (FileNotFoundError, PluginParseError, UnicodeDecodeError) as e:
         temp_path.unlink(missing_ok=True)
         raise ValueError(f"parse_error:{e}") from e
     

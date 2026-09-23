@@ -58,37 +58,50 @@ async def on_dialog_reply(message: Message) -> None:
     author_is_sender = int(sender.id) == author_id
 
     if author_is_sender:
-        from bot.keyboards import dialog_author_reply_kb
-        from bot.services.moderation import moderation_config
+        if message.chat.type != "private" or not peer_id or peer_id == author_id:
+            await message.answer(t("dialog_delivered", lang), disable_web_page_preview=True)
+            return
+        moderator_lang = get_lang(peer_id)
+        reply_markup = None
+        if request_id and entry:
+            from bot.cache import get_admins_super
 
-        cfg = moderation_config()
-        moderator_label = user_mention(peer_id, "") if peer_id and peer_id != author_id else "—"
+            if peer_id in get_admins_super():
+                from bot.keyboards import dialog_author_reply_kb
+
+                reply_markup = dialog_author_reply_kb(request_id, author_id)
         try:
             delivered = await message.bot.send_message(
-                cfg["chat_id"],
-                t(
-                    "dialog_author_reply_forum", "ru",
-                    name=plugin_name, sender=sender_label,
-                    moderator=moderator_label, text=body,
-                ),
+                peer_id,
+                t("dialog_msg_to_admin", moderator_lang, name=plugin_name, sender=sender_label, text=body),
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
-                message_thread_id=cfg["topic_id"],
-                reply_markup=dialog_author_reply_kb(request_id, author_id),
+                reply_markup=reply_markup,
             )
         except Exception:
             logger.exception(
-                "event=dialog.relay_forum_failed from=%s request_id=%s", sender.id, request_id,
+                "event=dialog.author_reply_to_moderator_failed from=%s to=%s request_id=%s",
+                sender.id, peer_id, request_id,
             )
             await message.answer(t("dialog_deliver_failed", lang), disable_web_page_preview=True)
             return
 
         register_dialog_message(
-            int(cfg["chat_id"]), delivered.message_id,
+            int(peer_id), delivered.message_id,
             peer_id=int(sender.id), request_id=request_id,
-            author_id=author_id, admin_id=admin_id,
+            author_id=author_id, admin_id=int(peer_id),
         )
         await message.answer(t("dialog_delivered", lang), disable_web_page_preview=True)
+        return
+
+    from bot.cache import get_admins
+
+    if int(sender.id) not in get_admins():
+        await message.answer(t("admin_denied", lang), disable_web_page_preview=True)
+        return
+
+    if admin_id and int(sender.id) != admin_id:
+        await message.answer(t("admin_denied", lang), disable_web_page_preview=True)
         return
 
     peer_lang = get_lang(peer_id)

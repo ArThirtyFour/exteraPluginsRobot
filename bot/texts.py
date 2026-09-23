@@ -826,18 +826,12 @@ TEXTS: Dict[str, Dict[str, str]] = {
         "en": "💬 <b>Message from moderation</b>\n\n<b>Submission:</b> {name}\n<b>From:</b> {sender}\n\n<blockquote expandable>{text}</blockquote>\n\n<i>Reply to this message to answer.</i>",
     },
     "dialog_msg_to_admin": {
-        "ru": "💬 <b>Ответ автора</b>\n\n<b>Заявка:</b> {name}\n<b>От:</b> {sender}\n\n<blockquote expandable>{text}</blockquote>\n\n<i>Ответьте реплаем на это сообщение, чтобы продолжить диалог.</i>",
-        "en": "💬 <b>Author's reply</b>\n\n<b>Submission:</b> {name}\n<b>From:</b> {sender}\n\n<blockquote expandable>{text}</blockquote>\n\n<i>Reply to this message to continue the conversation.</i>",
+        "ru": "💬 <b>Ответ автора вам</b>\n\n<b>Заявка:</b> {name}\n<b>От:</b> {sender}\n\n<blockquote expandable>{text}</blockquote>\n\n<i>Ответьте реплаем на это сообщение, чтобы продолжить диалог.</i>",
+        "en": "💬 <b>Author's reply to you</b>\n\n<b>Submission:</b> {name}\n<b>From:</b> {sender}\n\n<blockquote expandable>{text}</blockquote>\n\n<i>Reply to this message to continue the conversation.</i>",
     },
     "dialog_delivered": {"ru": "✅ Доставлено", "en": "✅ Delivered"},
     "kb_contact_moderation": {"ru": "Связь с модерацией", "en": "Contact moderation"},
-    "dialog_author_reply_forum": {
-        "ru": "💬 <b>Ответ автора</b>\n\n<b>Заявка:</b> {name}\n<b>Автор:</b> {sender}\n<b>Отвечает:</b> {moderator}\n\n<blockquote expandable>{text}</blockquote>\n\n<i>Ответьте реплаем, чтобы продолжить диалог.</i>",
-        "en": "💬 <b>Author's reply</b>\n\n<b>Submission:</b> {name}\n<b>Author:</b> {sender}\n<b>Replying to:</b> {moderator}\n\n<blockquote expandable>{text}</blockquote>\n\n<i>Reply to this message to continue.</i>",
-    },
     "kb_dialog_ban_author": {"ru": "Заблокировать автора", "en": "Ban author"},
-    "kb_dialog_reject_appeal": {"ru": "Отклонить апелляцию", "en": "Reject appeal"},
-    "dialog_appeal_rejected": {"ru": "Апелляция отклонена, плагин заблокирован", "en": "Appeal rejected, plugin blocked"},
     "dialog_author_banned": {"ru": "Автор заблокирован", "en": "Author banned"},
     "kb_submit_appeal": {"ru": "Подать апелляцию", "en": "Submit an appeal"},
     "modcontact_prompt": {

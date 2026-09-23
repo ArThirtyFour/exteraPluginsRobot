@@ -9,6 +9,8 @@ from storage import load_stats, save_stats
 
 WEEK_TIMEZONE = timezone(timedelta(hours=5))
 DECISION_STATUSES = frozenset({"published", "rejected", "rework", "deleted"})
+_activity_events: list | None = None
+_activity_index: dict[str, int] = {}
 
 
 def _datetime(value: Any) -> datetime | None:
@@ -61,16 +63,30 @@ def _username(value: Any, user_id: Any = None) -> str:
     return f"id{int(user_id)}" if str(user_id or "").isdigit() else "unknown"
 
 
+def _ensure_activity_index(events: list) -> None:
+    global _activity_events
+    if events is _activity_events:
+        return
+    _activity_events = events
+    _activity_index.clear()
+    for index, current in enumerate(events):
+        if isinstance(current, dict) and current.get("id"):
+            _activity_index[str(current["id"])] = index
+
+
 def _store_event(event: dict[str, Any]) -> None:
     doc = load_stats()
     events = doc.get("moderation_activity")
-    events = list(events) if isinstance(events, list) else []
+    if not isinstance(events, list):
+        events = []
+        doc["moderation_activity"] = events
+    _ensure_activity_index(events)
     event_id = str(event.get("id") or "")
-    for index, current in enumerate(events):
-        if isinstance(current, dict) and current.get("id") == event_id:
-            events[index] = event
-            break
+    existing_index = _activity_index.get(event_id)
+    if existing_index is not None:
+        events[existing_index] = event
     else:
+        _activity_index[event_id] = len(events)
         events.append(event)
     doc["moderation_activity"] = events
     save_stats(doc)
@@ -158,6 +174,9 @@ def record_decision(
 def sync_moderation_history() -> int:
     doc = load_stats()
     stored = doc.get("moderation_activity")
+    if doc.get("moderation_history_synced"):
+        _ensure_activity_index(stored if isinstance(stored, list) else [])
+        return 0
     events = {
         str(event.get("id")): event
         for event in (stored if isinstance(stored, list) else [])
@@ -197,7 +216,10 @@ def sync_moderation_history() -> int:
                 )
                 if event:
                     events[event["id"]] = event
-    doc["moderation_activity"] = list(events.values())
+    activity = list(events.values())
+    doc["moderation_activity"] = activity
+    doc["moderation_history_synced"] = True
+    _ensure_activity_index(activity)
     save_stats(doc)
     return max(0, len(events) - before)
 

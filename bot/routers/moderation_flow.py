@@ -9,7 +9,7 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.context import get_language
 from bot.formatting import plain_html, telegram_html, user_mention
-from bot.helpers import blank_and_delete
+from bot.helpers import blank_and_delete, spawn_background
 from bot.keyboards import moderation_vote_reason_kb, moderation_vote_template_kb
 from bot.services.audit import add_audit_event
 from bot.services.moderation import (
@@ -65,6 +65,27 @@ async def _refresh_inline_vote_message(bot, inline_message_id: str | None, entry
         )
     except Exception:
         pass
+
+
+async def _refresh_vote_surfaces(bot, request_id: str, entry: dict, prompt: dict,
+                                inline_message_id: str | None) -> None:
+    calls = [
+        ("prompt", _delete_prompt(bot, prompt)),
+        ("forum", refresh_forum_vote_keyboard(bot, entry)),
+        ("admin_notifications", refresh_admin_notify_messages(bot, entry)),
+        ("threshold_notifications", notify_superadmins_if_threshold(bot, entry)),
+    ]
+    if inline_message_id:
+        calls.append(("inline", _refresh_inline_vote_message(bot, inline_message_id, entry, request_id)))
+    results = await asyncio.gather(*(call for _, call in calls), return_exceptions=True)
+    for (name, _), result in zip(calls, results):
+        if isinstance(result, BaseException):
+            logger.error(
+                "event=vote.refresh_failed request_id=%s surface=%s",
+                request_id,
+                name,
+                exc_info=(type(result), result, result.__traceback__),
+            )
 
 
 def _prompt_text(entry: dict | None, vote: str, lang: str, moderator: str) -> str:
@@ -296,12 +317,6 @@ async def _finish_vote(bot, request_id: str, user_id: int, reason: str, cb: Call
     entry = commit_pending_vote(request_id, user_id, reason)
     if not entry:
         return False
-    await _delete_prompt(bot, item)
-    await refresh_forum_vote_keyboard(bot, entry)
-    await refresh_admin_notify_messages(bot, entry)
-    if cb is not None:
-        await _refresh_inline_vote_message(bot, cb.inline_message_id, entry, request_id)
-    await notify_superadmins_if_threshold(bot, entry)
     add_audit_event(
         "moderation.vote",
         actor_id=int(user_id),
@@ -309,6 +324,13 @@ async def _finish_vote(bot, request_id: str, user_id: int, reason: str, cb: Call
         request_id=request_id,
         details={"vote": item.get("vote"), "anonymous": bool(item.get("anonymous")), "reason": reason[:200]},
     )
+    spawn_background(_refresh_vote_surfaces(
+        bot,
+        request_id,
+        entry,
+        item,
+        cb.inline_message_id if cb is not None else None,
+    ))
     return True
 
 

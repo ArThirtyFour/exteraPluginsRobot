@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional, Tuple
 
-from catalog import find_plugin_by_slug, is_external_plugin, list_published_plugins
+from catalog import find_plugin_by_slug, has_official_plugin_id, is_external_plugin
 from bot.services.publish import make_slug
 from bot.services.versioning import compare_versions, meets_min_supported
 
@@ -68,11 +68,8 @@ def validate_new_submission(plugin: Dict[str, Any]) -> Tuple[bool, Optional[str]
     if existing and not is_external_plugin(existing):
         return False, "plugin_already_exists"
     
-    all_plugins = list_published_plugins(source_filter="official")
-    for p in all_plugins:
-        p_id = p.get("ru", {}).get("id") or p.get("slug", "")
-        if p_id.lower() == plugin_id.lower():
-            return False, "plugin_id_exists"
+    if has_official_plugin_id(plugin_id):
+        return False, "plugin_id_exists"
     
     return True, None
 
