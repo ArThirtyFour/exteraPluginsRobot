@@ -80,6 +80,33 @@ def updated_block_title() -> str:
     return t("admin_updated_block_title", "ru")
 
 
+def ensure_updated_plugins_quote(text: str) -> str:
+    title = updated_block_title()
+    position = text.rfind(title) if title else -1
+    if position < 0:
+        return text
+    suffix = text[position + len(title):]
+    if not suffix.strip():
+        return text
+    quote = re.match(
+        r"(?P<space>\s*)<blockquote(?P<attributes>[^>]*)>(?P<body>.*?)</blockquote>",
+        suffix,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if quote:
+        attributes = quote.group("attributes") or ""
+        if re.search(r"\bexpandable\b", attributes, re.IGNORECASE):
+            return text
+        replacement = (
+            f"{quote.group('space')}<blockquote{attributes} expandable>"
+            f"{quote.group('body')}</blockquote>"
+        )
+        prefix = text[:position + len(title)]
+        return prefix + suffix[:quote.start()] + replacement + suffix[quote.end():]
+    prefix = text[:position + len(title)]
+    return f"{prefix}\n<blockquote expandable>\n{suffix.strip()}\n</blockquote>"
+
+
 def build_updated_plugins_text(limit: int = 30) -> str:
     import html as _html
     from storage import load_updated
@@ -97,7 +124,7 @@ def build_updated_plugins_text(limit: int = 30) -> str:
             lines.append(f'• <a href="{_html.escape(link, quote=True)}">{_html.escape(name)}</a>')
         else:
             lines.append(f"• {_html.escape(name)}")
-    return "\n".join(lines) if len(lines) > 1 else ""
+    return ensure_updated_plugins_quote("\n".join(lines)) if len(lines) > 1 else ""
 
 
 def _now() -> datetime:
@@ -418,6 +445,8 @@ def _build_media_group(media: List[Dict[str, Any]], caption: str | None):
 async def send_content(bot, chat_id: int, content: Dict[str, Any]):
     from aiogram.enums import ParseMode
 
+    content = dict(content)
+    content["html_text"] = ensure_updated_plugins_quote(str(content.get("html_text") or ""))
     if content.get("rich") and rich_unsupported_media(content):
         content = dict(content)
         content["rich"] = False
@@ -650,6 +679,8 @@ async def _send_via_premium_userbot(bot, chat_id: int, content: Dict[str, Any], 
 
 
 async def _send_content_for_delivery(bot, chat_id: int, content: Dict[str, Any]):
+    content = dict(content)
+    content["html_text"] = ensure_updated_plugins_quote(str(content.get("html_text") or ""))
     text = normalize_custom_emoji(content.get("html_text") or "")
 
     if not content.get("rich"):
